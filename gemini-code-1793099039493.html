@@ -55,7 +55,7 @@
                     <span class="font-semibold text-emerald-400 ml-1">({{ todayShiftCount }}/3)</span>
                 </div>
 
-                <!-- Ngôn ngữ Selector (Mặc định Trung - zh) -->
+                <!-- Ngôn ngữ Selector -->
                 <select v-model="currentLang" @change="saveLang" class="bg-slate-800 border border-slate-700 text-slate-200 rounded px-2 py-1 focus:outline-none focus:border-indigo-500">
                     <option value="zh">中文 (默认)</option>
                     <option value="vi">Tiếng Việt</option>
@@ -73,7 +73,7 @@
             
             <!-- CỘT TRÁI: ĐẦU VÀO & LỊCH SỬ (40%) -->
             <section class="w-full md:w-2/5 flex flex-col gap-3 h-full">
-                <!-- Khu vực Kéo thả & Dán ảnh (Hỗ trợ Telegram Paste) -->
+                <!-- Khu vực Kéo thả & Dán ảnh -->
                 <div @dragover.prevent @drop.prevent="handleDrop" @paste="handlePaste" tabindex="0"
                      class="glass-panel rounded-xl p-4 border-2 border-dashed border-slate-700 hover:border-indigo-500 transition-all flex flex-col items-center justify-center text-center cursor-pointer shrink-0 h-36 group focus:outline-none focus:border-indigo-500"
                      @click="$refs.fileInput.click()">
@@ -83,6 +83,26 @@
                     <p class="text-xs font-medium text-slate-300">{{ t.dropzoneText }}</p>
                     <p class="text-[10px] text-slate-500 mt-1">{{ t.dropzoneSub }}</p>
                     <input type="file" ref="fileInput" @change="handleFileSelect" accept="image/*" multiple class="hidden">
+                </div>
+
+                <!-- Thanh tiến trình % xử lý -->
+                <div v-if="isProcessing" class="glass-panel rounded-xl p-3 shrink-0 space-y-1.5 border border-indigo-500/40">
+                    <div class="flex justify-between text-xs font-medium text-slate-300">
+                        <span>{{ processingStatusText }}</span>
+                        <span class="text-indigo-400 font-bold">{{ progressPercent }}%</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                        <div class="bg-indigo-500 h-full transition-all duration-300" :style="{ width: progressPercent + '%' }"></div>
+                    </div>
+                </div>
+
+                <!-- Hộp thoại Báo lỗi chi tiết (nếu có) -->
+                <div v-if="lastError" class="glass-panel rounded-xl p-3 shrink-0 border border-rose-500/40 bg-rose-950/20 text-xs space-y-1">
+                    <div class="font-bold text-rose-400 flex justify-between items-center">
+                        <span>⚠️ OCR Error Log</span>
+                        <button @click="lastError = null" class="text-slate-400 hover:text-white">✕</button>
+                    </div>
+                    <p class="text-slate-300 break-words font-mono text-[11px]">{{ lastError }}</p>
                 </div>
 
                 <!-- Danh sách lịch sử ảnh (Cuộn độc lập) -->
@@ -299,6 +319,12 @@
                 const isTwoColumnTable = ref(false);
                 const activeTraceId = ref(null);
 
+                // Biến trạng thái tiến trình và lỗi chi tiết
+                const isProcessing = ref(false);
+                const progressPercent = ref(0);
+                const processingStatusText = ref('');
+                const lastError = ref(null);
+
                 const defaultCategories = [
                     "节点超时/线路异常", "注册来源为空", "证书问题", "讯息发送/接受异常",
                     "网域被墙/拦截", "下载链接/浏览器异常", "场地IP被拉黑", "无法注册",
@@ -366,6 +392,7 @@
                     }
                 };
 
+                // Xử lý hàng đợi file kèm thanh tiến trình %
                 const processFiles = async (files) => {
                     if (!apiKey.value) {
                         alert("Please configure your Gemini API Key first!");
@@ -373,59 +400,100 @@
                         return;
                     }
 
-                    for (let file of files) {
-                        const reader = new FileReader();
-                        reader.onload = async (event) => {
-                            const base64Data = event.target.result;
-                            await analyzeImageWithGemini(base64Data, file.name || "telegram_paste.jpg");
-                        };
-                        reader.readAsDataURL(file);
+                    isProcessing.value = true;
+                    progressPercent.value = 0;
+                    lastError.value = null;
+                    const totalFiles = files.length;
+
+                    for (let i = 0; i < totalFiles; i++) {
+                        const file = files[i];
+                        processingStatusText.value = `Processing ${i + 1}/${totalFiles}: ${file.name || 'image.jpg'}`;
+                        progressPercent.value = Math.round(((i) / totalFiles) * 100);
+
+                        await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onload = async (event) => {
+                                const base64Data = event.target.result;
+                                await analyzeImageWithRetry(base64Data, file.name || "telegram_paste.jpg");
+                                resolve();
+                            };
+                            reader.readAsDataURL(file);
+                        });
                     }
+
+                    progressPercent.value = 100;
+                    setTimeout(() => {
+                        isProcessing.value = false;
+                    }, 500);
                 };
 
-                // Cập nhật endpoint với định danh model mới nhất: gemini-3.8-flash
-                const analyzeImageWithGemini = async (base64Data, fileName) => {
-                    const base64Image = base64Data.split(',')[1];
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey.value}`;
-                    
-                    const prompt = `Analyze this QT software issue statistics report image ("QT软件使用问题统计"). Extract the items into a JSON format with structure:
-                    {
-                      "items": [
-                        { "id": 1, "name": "节点超时/线路异常", "occurrences": 2, "processed": 2 }
-                      ],
-                      "totalOccurrences": 12,
-                      "totalProcessed": 12
+                // Phương án dự phòng: Cơ chế Fallback Model & Auto-Retry khi quá tải (503 / High Demand)
+                const callGeminiAPIWithFallback = async (base64Image) => {
+                    // Danh sách model dự phòng theo thứ tự ưu tiên
+                    const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+                    let lastException = null;
+
+                    for (const modelName of models) {
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey.value}`;
+                        const prompt = `Analyze this QT software issue statistics report image ("QT软件使用问题统计"). Extract the items into a JSON format with structure:
+                        {
+                          "items": [
+                            { "id": 1, "name": "节点超时/线路异常", "occurrences": 2, "processed": 2 }
+                          ],
+                          "totalOccurrences": 12,
+                          "totalProcessed": 12
+                        }
+                        Ensure exact numbers are extracted. Return ONLY valid JSON.`;
+
+                        // Thử retry 2 lần cho mỗi model nếu gặp quá tải tạm thời
+                        for (let attempt = 1; attempt <= 2; attempt++) {
+                            try {
+                                const response = await fetch(url, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                    contents: [{
+                                        parts: [
+                                            { text: prompt },
+                                            { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+                                        ]
+                                    }]
+                                })
+                                });
+
+                                const result = await response.json();
+                                if (result.error) {
+                                    throw new Error(`[Model: ${modelName}] Code ${result.error.code}: ${result.error.message}`);
+                                }
+                                if (!result.candidates || result.candidates.length === 0) {
+                                    throw new Error(`[Model: ${modelName}] No candidates returned. Image might be blocked.`);
+                                }
+
+                                const textResponse = result.candidates[0].content.parts[0].text;
+                                const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
+                                if (!jsonMatch) throw new Error(`[Model: ${modelName}] Invalid JSON structure returned from AI.`);
+
+                                return JSON.parse(jsonMatch[0]); // Thành công trả về kết quả
+                            } catch (err) {
+                                lastException = err;
+                                console.warn(`Attempt ${attempt} failed with model ${modelName}:`, err.message);
+                                // Nếu lỗi quá tải (503 hoặc overloaded), đợi 2 giây rồi retry
+                                if (err.message.includes('503') || err.message.includes('overloaded') || err.message.includes('high demand')) {
+                                    await new Promise(r => setTimeout(r, 2000));
+                                    continue;
+                                } else {
+                                    break; // Lỗi khác (như sai key) thì chuyển model ngay
+                                }
+                            }
+                        }
                     }
-                    Ensure exact numbers are extracted. Return ONLY valid JSON.`;
+                    throw lastException || new Error("All fallback models failed to process the image.");
+                };
 
+                const analyzeImageWithRetry = async (base64Data, fileName) => {
                     try {
-                        const response = await fetch(url, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                contents: [{
-                                    parts: [
-                                        { text: prompt },
-                                        { inline_data: { mime_type: "image/jpeg", data: base64Image } }
-                                    ]
-                                }]
-                            })
-                        });
-
-                        const result = await response.json();
-                        
-                        if (result.error) {
-                            throw new Error(result.error.message || "Gemini API Error");
-                        }
-                        if (!result.candidates || result.candidates.length === 0) {
-                            throw new Error("No response candidates returned from AI. Image might be blocked.");
-                        }
-
-                        const textResponse = result.candidates[0].content.parts[0].text;
-                        const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
-                        if (!jsonMatch) throw new Error("Invalid JSON format from AI response");
-                        
-                        const parsedData = JSON.parse(jsonMatch[0]);
+                        const base64Image = base64Data.split(',')[1];
+                        const parsedData = await callGeminiAPIWithFallback(base64Image);
 
                         let sumOcc = parsedData.items.reduce((acc, item) => acc + item.occurrences, 0);
                         let isValid = (sumOcc === parsedData.totalOccurrences);
@@ -442,10 +510,9 @@
 
                         reports.value.unshift(newReport);
                         localStorage.setItem('qt_reports_data', JSON.stringify(reports.value));
-
                     } catch (error) {
                         console.error(error);
-                        alert("OCR Error: " + error.message);
+                        lastError.value = `${fileName}: ${error.message}`;
                     }
                 };
 
@@ -527,6 +594,7 @@
                 return {
                     currentLang, t, reports, apiKey, tempApiKey, showApiKeyModal,
                     isTwoColumnTable, activeTraceId, todayShiftCount,
+                    isProcessing, progressPercent, processingStatusText, lastError,
                     handleFileSelect, handleDrop, handlePaste, removeReport, clearAll,
                     aggregatedRows, totalOccurrences, totalProcessed, isRowActive,
                     openApiKeyModal, saveApiKey, exportExcel, exportPNG, saveLang
