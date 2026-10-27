@@ -75,7 +75,8 @@
             <section class="w-full md:w-2/5 flex flex-col gap-3 h-full">
                 <!-- Khu vực Kéo thả & Dán ảnh (Hỗ trợ Telegram Paste) -->
                 <div @dragover.prevent @drop.prevent="handleDrop" @paste="handlePaste" tabindex="0"
-                     class="glass-panel rounded-xl p-4 border-2 border-dashed border-slate-700 hover:border-indigo-500 transition-all flex flex-col items-center justify-center text-center cursor-pointer shrink-0 h-36 group focus:outline-none focus:border-indigo-500">
+                     class="glass-panel rounded-xl p-4 border-2 border-dashed border-slate-700 hover:border-indigo-500 transition-all flex flex-col items-center justify-center text-center cursor-pointer shrink-0 h-36 group focus:outline-none focus:border-indigo-500"
+                     @click="$refs.fileInput.click()">
                     <div class="w-10 h-10 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
                         📥
                     </div>
@@ -345,7 +346,6 @@
                     processFiles(e.dataTransfer.files);
                 };
 
-                // Xử lý dán ảnh trực tiếp từ Telegram (Clipboard Items & Clipboard Files)
                 const handlePaste = (e) => {
                     const items = e.clipboardData.items;
                     const files = [];
@@ -383,10 +383,10 @@
                     }
                 };
 
-                // Gọi Gemini Vision API với cơ chế bắt lỗi an toàn (Safe Error Handling)
+                // Cập nhật endpoint với định danh model mới nhất: gemini-3.8-flash
                 const analyzeImageWithGemini = async (base64Data, fileName) => {
                     const base64Image = base64Data.split(',')[1];
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey.value}`;
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey.value}`;
                     
                     const prompt = `Analyze this QT software issue statistics report image ("QT软件使用问题统计"). Extract the items into a JSON format with structure:
                     {
@@ -414,7 +414,6 @@
 
                         const result = await response.json();
                         
-                        // Kiểm tra lỗi trả về từ API để tránh sập app
                         if (result.error) {
                             throw new Error(result.error.message || "Gemini API Error");
                         }
