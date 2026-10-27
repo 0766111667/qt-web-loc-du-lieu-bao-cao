@@ -1,8 +1,0 @@
-{
-  "name":"qt-report-aggregator",
-  "version":"2.0.0",
-  "private":true,
-  "type":"module",
-  "scripts":{"build":"node scripts/build-check.mjs","dev":"node scripts/dev.mjs","test":"node --test"},
-  "engines":{"node":">=18"}
-}
