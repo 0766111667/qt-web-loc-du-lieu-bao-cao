@@ -26,69 +26,96 @@ function normalizeOcrText(s){
   return String(s||'').toLowerCase().replace(/[\s/（）()·.\-_:：|]/g,'').replace(/[０-９]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0));
 }
 function parseOcr(text, categories){
-  const lines=text.split(/\n+/).map(s=>s.trim()).filter(Boolean);
-  const result={}; const unmatched=[]; let expectedTotal=null;
-  for(const c of categories) result[c.id]={occur:0,done:0,confidence:0,needsReview:true};
+  const lines=String(text||'').split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  const result={}; const unmatched=[]; let expectedTotal=null; const seen=new Set();
+  for(const c of categories) result[c.id]={occur:0,done:0,confidence:0,needsReview:true,recognized:false};
+  // The row number is the stable key. Chinese labels are useful evidence, but
+  // must not be required: a missed label such as 无法注册 must not erase row 8.
   for(const line of lines){
-    const source=normalizeOcrText(line);
-    const nums=(line.match(/\d+(?:\.\d+)?/g)||[]).map(Number);
-    // Read the printed grand-total row separately. It is a reconciliation guard,
-    // never a substitute for reading individual rows.
-    if(/总计|合计|total/i.test(line) && nums.length>=2){
-      const ints=nums.map(n=>Math.round(n));
-      expectedTotal=ints.length>=3?ints[ints.length-3]:ints[0];
+    const compact=line.replace(/[，,]/g,' ');
+    const nums=(compact.match(/\d+(?:\.\d+)?/g)||[]).map(Number);
+    if(/总计|合计|total/i.test(line) && nums.length>=1){
+      // Typical footer: 总计 9 9 100%. The first numeric field is occurrence total.
+      expectedTotal=Math.round(nums[0]);
       continue;
     }
-    let matches=[];
-    for(const c of categories){
-      const label=normalizeOcrText(c.name);
-      // Deliberately avoid fuzzy character overlap: it can assign a row to the wrong category.
-      if(label && source.includes(label)) matches.push(c);
-    }
-    if(matches.length!==1) { if(nums.length>=2) unmatched.push(line); continue; }
-    const cat=matches[0];
-    // Typical row: serial, occurrences, resolved, percentage. Only accept rows
-    // with enough numeric structure to distinguish the serial from the values.
-    if(nums.length>=4){
-      const occur=Math.round(nums[1]), done=Math.round(nums[2]);
-      result[cat.id]={occur,done,confidence:95,needsReview:false};
-    } else if(nums.length===3){
-      // Serial + occurrences + resolved, with percentage omitted by OCR.
-      result[cat.id]={occur:Math.round(nums[1]),done:Math.round(nums[2]),confidence:75,needsReview:true};
-    } else {
-      unmatched.push(line);
+    const rowMatch=compact.match(/^\s*(\d{1,2})(?=\s|[.、:：]|[\u4e00-\u9fff])/);
+    if(!rowMatch) continue;
+    const serial=Number(rowMatch[1]);
+    if(serial<1 || serial>categories.length || nums.length<3) continue;
+    const cat=categories[serial-1];
+    // Keep the strongest parse for a row; do not add results from OCR passes.
+    // Numeric order for the template is serial, occurrence, resolved, percent.
+    const occur=Math.round(nums[1]), done=Math.round(nums[2]);
+    if(!Number.isFinite(occur)||!Number.isFinite(done)||occur<0||done<0||done>occur) {unmatched.push(line);continue;}
+    const labelHit=normalizeOcrText(line).includes(normalizeOcrText(cat.name));
+    const confidence=nums.length>=4?(labelHit?98:91):(labelHit?86:72);
+    const previous=result[cat.id];
+    if(!previous.recognized || confidence>previous.confidence){
+      result[cat.id]={occur,done,confidence,needsReview:confidence<90,recognized:true,sourceLine:line};
+      seen.add(cat.id);
     }
   }
-  const sum=Object.values(result).reduce((n,v)=>n+v.occur,0);
-  const hasUncertain=Object.values(result).some(v=>v.needsReview);
-  return {values:result,unmatched,expectedTotal,totalMatches:expectedTotal===null?null:sum===expectedTotal,needsReview:hasUncertain||expectedTotal===null||sum!==expectedTotal};
+  // If the OCR text lacks serial numbers, allow a conservative label-based fallback.
+  // It is never allowed to overwrite a serial-indexed row.
+  for(const line of lines){
+    const source=normalizeOcrText(line); const nums=(line.match(/\d+(?:\.\d+)?/g)||[]).map(Number);
+    if(/总计|合计|total/i.test(line)) continue;
+    const matches=categories.filter(c=>normalizeOcrText(c.name)&&source.includes(normalizeOcrText(c.name)));
+    if(matches.length!==1||nums.length<3) continue;
+    const cat=matches[0]; if(result[cat.id].recognized) continue;
+    const rowMatch=line.match(/^\s*\d{1,2}(?=\s|[.、:：]|[\u4e00-\u9fff])/);
+    const offset=rowMatch?1:0; if(nums.length<offset+2) continue;
+    const occur=Math.round(nums[offset]),done=Math.round(nums[offset+1]);
+    if(occur>=0&&done>=0&&done<=occur) result[cat.id]={occur,done,confidence:78,needsReview:true,recognized:true,sourceLine:line};
+  }
+  const recognizedRows=Object.values(result).filter(v=>v.recognized).length;
+  const sum=Object.values(result).reduce((n,v)=>n+(v.recognized?v.occur:0),0);
+  const doneSum=Object.values(result).reduce((n,v)=>n+(v.recognized?v.done:0),0);
+  const missing=categories.filter(c=>!result[c.id].recognized).map(c=>c.name);
+  const hasUncertain=Object.values(result).some(v=>!v.recognized||v.needsReview);
+  return {values:result,unmatched,expectedTotal,totalMatches:expectedTotal===null?null:sum===expectedTotal,needsReview:hasUncertain||expectedTotal===null||sum!==expectedTotal,recognizedRows,totalRows:categories.length,missingRows:missing,recognizedOccurrenceSum:sum,recognizedDoneSum:doneSum};
 }
-async function preprocessForOcr(file){
-  // Upscale and normalize illumination mildly. Avoid hard binarization, which can
-  // erase thin Chinese strokes in photographed/moire-heavy tables.
+async function makeOcrVariants(file){
   const url=URL.createObjectURL(file);
   try {
     const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=url;});
-    const scale=Math.min(2.2,2400/Math.max(img.naturalWidth,img.naturalHeight));
-    const canvas=document.createElement('canvas'); canvas.width=Math.round(img.naturalWidth*scale); canvas.height=Math.round(img.naturalHeight*scale);
-    const ctx=canvas.getContext('2d',{willReadFrequently:true}); ctx.drawImage(img,0,0,canvas.width,canvas.height);
-    const frame=ctx.getImageData(0,0,canvas.width,canvas.height); const d=frame.data;
-    for(let i=0;i<d.length;i+=4){const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; const c=Math.max(0,Math.min(255,(g-118)*1.22+145)); d[i]=d[i+1]=d[i+2]=c;}
+    const scale=Math.min(3,3000/Math.max(img.naturalWidth,img.naturalHeight));
+    const canvas=document.createElement('canvas');canvas.width=Math.round(img.naturalWidth*scale);canvas.height=Math.round(img.naturalHeight*scale);
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    const original=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('image conversion failed')),'image/png'));
+    const frame=ctx.getImageData(0,0,canvas.width,canvas.height);const d=frame.data;
+    // Mild contrast enhancement only. Avoid hard thresholding which destroys thin Chinese strokes.
+    for(let i=0;i<d.length;i+=4){const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];const c=Math.max(0,Math.min(255,(g-112)*1.38+148));d[i]=d[i+1]=d[i+2]=c;}
     ctx.putImageData(frame,0,0);
-    return await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('preprocess failed')),'image/png'));
-  } finally { URL.revokeObjectURL(url); }
+    const contrast=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('contrast conversion failed')),'image/png'));
+    return [original,contrast];
+  } finally {URL.revokeObjectURL(url);}
+}
+function scoreParse(p){
+  // Completeness first, exact printed-total match second, then confidence.
+  return p.recognizedRows*10000+(p.totalMatches===true?5000:0)+(p.expectedTotal===null?0:100)+Object.values(p.values).reduce((n,v)=>n+v.confidence,0);
 }
 async function recognizeImage(file,categories){
   const worker=await createWorker('chi_sim+eng',1,{logger:()=>{}});
   try{
-    await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:'6'});
-    const prepared=await preprocessForOcr(file);
-    const {data}=await worker.recognize(prepared);
-    const parsed=parseOcr(data.text,categories);
-    return {...parsed,rawText:data.text,confidence:Math.round(data.confidence||0)};
-  } finally { await worker.terminate(); }
+    const variants=await makeOcrVariants(file);let candidates=[];let rawParts=[];
+    const modes=['6','11','4'];
+    for(let vi=0;vi<variants.length;vi++){
+      for(const mode of modes){
+        await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:mode});
+        const {data}=await worker.recognize(variants[vi]);
+        const parsed=parseOcr(data.text,categories);
+        candidates.push({...parsed,rawText:data.text,confidence:Math.round(data.confidence||0),ocrPass:`variant-${vi+1}/psm-${mode}`});
+        rawParts.push(`--- ${`variant-${vi+1}/psm-${mode}`} · ${Math.round(data.confidence||0)}% ---\n${data.text}`);
+      }
+    }
+    candidates.sort((a,b)=>scoreParse(b)-scoreParse(a));
+    const best=candidates[0];
+    // Keep all pass output for diagnostics; the UI shows exactly which rows were not found.
+    return {...best,rawText:`BEST PASS: ${best.ocrPass}\nRECOGNIZED ROWS: ${best.recognizedRows}/${best.totalRows}\nMISSING: ${(best.missingRows||[]).join(', ')||'none'}\n\n${rawParts.join('\n\n')}`};
+  } finally {await worker.terminate();}
 }
-
 function App(){
  const [lang,setLang]=useState('zh'); const t=TEXT[lang];
  const [categories,setCategories]=useState(INITIAL.map((name,i)=>({id:`issue-${i+1}`,name,active:true})));
@@ -104,12 +131,12 @@ function App(){
  const confirmed=monthReports.filter(r=>r.status==='confirmed');
  const totals=useMemo(()=>{const map={};activeCats.forEach(c=>map[c.id]={occur:0,done:0});confirmed.forEach(r=>activeCats.forEach(c=>{map[c.id].occur+=Number(r.values?.[c.id]?.occur||0);map[c.id].done+=Number(r.values?.[c.id]?.done||0);}));const occur=Object.values(map).reduce((s,v)=>s+v.occur,0),done=Object.values(map).reduce((s,v)=>s+v.done,0);return {map,occur,done};},[activeCats,confirmed]);
  const dayCount=reports.filter(r=>r.date===todayISO()&&r.status==='confirmed').length;
- const processFiles=useCallback(async(files)=>{const arr=Array.from(files||[]).filter(f=>f.type.startsWith('image/'));if(!arr.length)return;setBusy(v=>v+arr.length);for(const file of arr){const id=uid();const report={id,name:file.name||`pasted-${new Date().toISOString()}.png`,date:todayISO(),shift:'',source:'',status:'processing',values:emptyValues(categories),rawText:'',confidence:0,createdAt:new Date().toISOString(),image:null};try{report.image=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});setReports(prev=>[report,...prev]);const result=await recognizeImage(file,categories);report.values=result.values;report.rawText=result.rawText;report.confidence=result.confidence;report.expectedTotal=result.expectedTotal;report.totalMatches=result.totalMatches;report.needsReview=result.needsReview;report.status='review';setReports(prev=>prev.map(r=>r.id===id?{...report}:r));setToast(t.review);}catch(e){report.status='review';report.rawText=`OCR error: ${e?.message||e}`;setReports(prev=>prev.map(r=>r.id===id?{...report}:r));setToast(t.error);}finally{setBusy(v=>Math.max(0,v-1));}}},[categories,t]);
+ const processFiles=useCallback(async(files)=>{const arr=Array.from(files||[]).filter(f=>f.type.startsWith('image/'));if(!arr.length)return;setBusy(v=>v+arr.length);for(const file of arr){const id=uid();const report={id,name:file.name||`pasted-${new Date().toISOString()}.png`,date:todayISO(),shift:'',source:'',status:'processing',values:emptyValues(categories),rawText:'',confidence:0,createdAt:new Date().toISOString(),image:null};try{report.image=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});setReports(prev=>[report,...prev]);const result=await recognizeImage(file,categories);report.values=result.values;report.rawText=result.rawText;report.confidence=result.confidence;report.expectedTotal=result.expectedTotal;report.totalMatches=result.totalMatches;report.needsReview=result.needsReview;report.recognizedRows=result.recognizedRows;report.totalRows=result.totalRows;report.missingRows=result.missingRows;report.ocrPass=result.ocrPass;report.status='review';setReports(prev=>prev.map(r=>r.id===id?{...report}:r));setToast(t.review);}catch(e){report.status='review';report.rawText=`OCR error: ${e?.message||e}`;setReports(prev=>prev.map(r=>r.id===id?{...report}:r));setToast(t.error);}finally{setBusy(v=>Math.max(0,v-1));}}},[categories,t]);
  const onFiles=e=>{processFiles(e.target.files);e.target.value='';};
  useEffect(()=>{const paste=e=>{const items=Array.from(e.clipboardData?.items||[]);const files=items.filter(i=>i.type.startsWith('image/')).map(i=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();processFiles(files);}};window.addEventListener('paste',paste);return()=>window.removeEventListener('paste',paste);},[processFiles]);
  const updateReport=(id,patch)=>setReports(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
  const updateValue=(reportId,catId,key,value)=>setReports(prev=>prev.map(r=>r.id===reportId?{...r,values:{...r.values,[catId]:{...(r.values?.[catId]||{}),[key]:Math.max(0,Number(value)||0)}}}:r));
- const confirmReport=r=>{for(const c of activeCats){const v=r.values?.[c.id]||{};if(Number(v.done||0)>Number(v.occur||0)){setToast(`${c.name}: 已处理不能大于发生次数`);return;}}const sum=activeCats.reduce((n,c)=>n+Number(r.values?.[c.id]?.occur||0),0);if(r.expectedTotal!=null&&sum!==Number(r.expectedTotal)){setToast(`总计对不上：明细 ${sum}，图片总计 ${r.expectedTotal}。请先修改明细。`);return;}if(r.needsReview){const ok=window.confirm('部分 OCR 行未能可靠识别或总计未识别。确认前请逐行对照原图。仍要计入汇总吗？');if(!ok)return;}updateReport(r.id,{status:'confirmed'});setToast(t.accepted);};
+ const confirmReport=r=>{if(r.recognizedRows!=null&&r.recognizedRows<r.totalRows){setToast(`OCR 仅识别到 ${r.recognizedRows}/${r.totalRows} 行，缺失：${(r.missingRows||[]).join('、')}。请先重新识别；系统不会将未识别行按 0 计入。无需手动填写。`);return;}for(const c of activeCats){const v=r.values?.[c.id]||{};if(Number(v.done||0)>Number(v.occur||0)){setToast(`${c.name}: 已处理不能大于发生次数`);return;}}const sum=activeCats.reduce((n,c)=>n+Number(r.values?.[c.id]?.occur||0),0);if(r.expectedTotal!=null&&sum!==Number(r.expectedTotal)){setToast(`总计对不上：明细 ${sum}，图片总计 ${r.expectedTotal}。请重新识别或使用更清晰的原图，无需手动填写。`);return;}if(r.needsReview){setToast('识别结果未通过完整性校验，暂不计入汇总。请重新识别。');return;}updateReport(r.id,{status:'confirmed'});setToast(t.accepted);};
  const deleteReport=id=>{setReports(prev=>prev.filter(r=>r.id!==id));setToast(t.remove);};
  const addCategory=()=>{const name=newCategory.trim();if(!name)return;if(categories.some(c=>c.name.toLowerCase()===name.toLowerCase())){setToast('Already exists');return;}setCategories(prev=>[...prev,{id:uid(),name,active:true}]);setNewCategory('');};
  const exportExcel=()=>{const wsData=[[t.month,month],[t.issue,t.occur,t.done,t.share],...activeCats.map(c=>[c.name,totals.map[c.id]?.occur||0,totals.map[c.id]?.done||0,totals.occur?((totals.map[c.id]?.occur||0)/totals.occur*100).toFixed(1)+'%':'0%']),[t.total,totals.occur,totals.done,totals.occur?'100%':'0%']];const ws=XLSX.utils.aoa_to_sheet(wsData);ws['!cols']=[{wch:34},{wch:16},{wch:16},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'QT Report');const log=XLSX.utils.aoa_to_sheet([[t.report,t.date,t.shiftLabel,t.issue,t.occur,t.done,'Status'],...monthReports.flatMap(r=>activeCats.map(c=>[r.name,r.date,r.shift,c.name,r.values?.[c.id]?.occur||0,r.values?.[c.id]?.done||0,r.status]))]);XLSX.utils.book_append_sheet(wb,log,'Raw reports');XLSX.writeFile(wb,`QT-Report-${month}.xlsx`);};
@@ -123,11 +150,11 @@ function App(){
    <section className="panel inbox-panel"><div className="panel-heading"><div><div className="eyebrow">01 / INTAKE</div><h2>{t.inbox}</h2><p>{t.inboxSub}</p></div><span className="count-pill">{monthReports.length} {t.images}</span></div>
     <div className="dropzone" onClick={()=>fileRef.current?.click()} onDragOver={e=>{e.preventDefault();e.currentTarget.classList.add('dragging')}} onDragLeave={e=>e.currentTarget.classList.remove('dragging')} onDrop={handleDrop}><div className="upload-icon"><CloudUpload size={26}/></div><strong>{t.ready}</strong><span>{t.inboxSub}</span><div className="drop-actions"><button className="primary-btn" onClick={e=>{e.stopPropagation();fileRef.current?.click()}}><ImagePlus size={16}/>{t.received}</button><button className="secondary-btn" onClick={e=>{e.stopPropagation();setClipboardReady(true);pasteRef.current?.focus();setToast(t.pasteHelp)}}><ClipboardPaste size={16}/>{t.clipboard}</button></div><input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onFiles}/><input ref={pasteRef} className="paste-catcher" aria-label={t.clipboard} onFocus={()=>setClipboardReady(true)} onBlur={()=>setClipboardReady(false)} /></div>
     <div className="queue-toolbar"><div><h3>{t.report} <span>{monthReports.length}</span></h3><p>{t.ocrIntro}</p></div><div className="filter-tabs"><button className={filter==='all'?'active':''} onClick={()=>setFilter('all')}>{t.all}</button><button className={filter==='review'?'active':''} onClick={()=>setFilter('review')}>{t.needReview}</button><button className={filter==='confirmed'?'active':''} onClick={()=>setFilter('confirmed')}>{t.doneLabel}</button></div></div>
-    <div className="report-list">{shownReports.length===0?<div className="empty-state"><div className="empty-orb"><FileImage size={25}/></div><strong>{t.empty}</strong><span>{t.pasteHelp}</span></div>:shownReports.map(r=><article className={`report-card ${r.status==='confirmed'?'confirmed':''}`} key={r.id} onMouseEnter={()=>setHoverId(r.id)} onMouseLeave={()=>setHoverId(null)}><div className="report-top"><div className="thumb" onClick={()=>r.image&&window.open(r.image,'_blank','noopener,noreferrer')}>{r.image?<img src={r.image} alt={r.name}/>:<FileImage size={22}/>}</div><div className="report-meta"><strong title={r.name}>{r.name}</strong><span>{r.date} · {r.status==='confirmed'?t.doneLabel:r.status==='processing'?t.processing:t.pending}</span><div className="confidence"><span>{t.confidence}</span><div><i style={{width:`${Math.max(0,Math.min(100,r.confidence||0))}%`}}/></div><b>{r.confidence||0}%</b></div></div><button className="tiny-icon danger" title={t.remove} onClick={()=>deleteReport(r.id)}><Trash2 size={15}/></button></div>
+    <div className="report-list">{shownReports.length===0?<div className="empty-state"><div className="empty-orb"><FileImage size={25}/></div><strong>{t.empty}</strong><span>{t.pasteHelp}</span></div>:shownReports.map(r=><article className={`report-card ${r.status==='confirmed'?'confirmed':''}`} key={r.id} onMouseEnter={()=>setHoverId(r.id)} onMouseLeave={()=>setHoverId(null)}><div className="report-top"><div className="thumb" onClick={()=>r.image&&window.open(r.image,'_blank','noopener,noreferrer')}>{r.image?<img src={r.image} alt={r.name}/>:<FileImage size={22}/>}</div><div className="report-meta"><strong title={r.name}>{r.name}</strong><span>{r.date} · {r.status==='confirmed'?t.doneLabel:r.status==='processing'?t.processing:t.pending}</span><div className="confidence"><span>{t.confidence}</span><div><i style={{width:`${Math.max(0,Math.min(100,r.confidence||0))}%`}}/></div><b>{r.confidence||0}%</b></div>{r.recognizedRows!=null&&<small className={r.recognizedRows===r.totalRows&&r.totalMatches!==false?'ocr-row-count':'ocr-row-count ocr-row-warning'}>识别到 {r.recognizedRows}/{r.totalRows} 行 · {r.ocrPass||''}{r.missingRows?.length?` · 缺失：${r.missingRows.join('、')}`:''}</small>}</div><button className="tiny-icon danger" title={t.remove} onClick={()=>deleteReport(r.id)}><Trash2 size={15}/></button></div>
       <div className="report-fields"><label>{t.date}<input type="date" value={r.date||todayISO()} onChange={e=>updateReport(r.id,{date:e.target.value})}/></label><label>{t.shiftLabel}<input value={r.shift||''} placeholder="A / B / C" onChange={e=>updateReport(r.id,{shift:e.target.value})}/></label><label>{t.source}<input value={r.source||''} placeholder="Team / note" onChange={e=>updateReport(r.id,{source:e.target.value})}/></label></div>
       <div className="mini-table-wrap"><table className="mini-table"><thead><tr><th>{t.issue}</th><th>{t.occur}</th><th>{t.done}</th></tr></thead><tbody>{activeCats.map(c=><tr key={c.id}><td>{c.name}</td><td><input type="number" min="0" value={r.values?.[c.id]?.occur??0} onChange={e=>updateValue(r.id,c.id,'occur',e.target.value)} /></td><td><input type="number" min="0" value={r.values?.[c.id]?.done??0} onChange={e=>updateValue(r.id,c.id,'done',e.target.value)} /></td></tr>)}</tbody></table></div>
       {r.rawText&&<details className="raw-text"><summary>{t.unmatched} / OCR text</summary><pre>{r.rawText}</pre></details>}
-      <div className="report-footer"><span className={`status ${r.status==='confirmed'?'ok':'pending'}`}>{r.status==='confirmed'?<Check size={13}/>:<AlertTriangle size={13}/>} {r.status==='confirmed'?t.doneLabel:t.pending}</span><div><button className="text-btn" onClick={async()=>{setBusy(v=>v+1);try{const file=await (await fetch(r.image)).blob();const res=await recognizeImage(new File([file],r.name,{type:file.type}),categories);updateReport(r.id,{values:res.values,rawText:res.rawText,confidence:res.confidence,expectedTotal:res.expectedTotal,totalMatches:res.totalMatches,needsReview:res.needsReview,status:'review'});}catch{setToast(t.error)}finally{setBusy(v=>Math.max(0,v-1));}}}><RotateCcw size={14}/>{t.reprocess}</button>{r.status!=='confirmed'&&<button className="primary-btn compact" onClick={()=>confirmReport(r)}><CheckCircle2 size={15}/>{t.confirm}</button>}</div></div>
+      <div className="report-footer"><span className={`status ${r.status==='confirmed'?'ok':'pending'}`}>{r.status==='confirmed'?<Check size={13}/>:<AlertTriangle size={13}/>} {r.status==='confirmed'?t.doneLabel:t.pending}</span><div><button className="text-btn" onClick={async()=>{setBusy(v=>v+1);try{const file=await (await fetch(r.image)).blob();const res=await recognizeImage(new File([file],r.name,{type:file.type}),categories);updateReport(r.id,{values:res.values,rawText:res.rawText,confidence:res.confidence,expectedTotal:res.expectedTotal,totalMatches:res.totalMatches,needsReview:res.needsReview,recognizedRows:res.recognizedRows,totalRows:res.totalRows,missingRows:res.missingRows,ocrPass:res.ocrPass,status:'review'});}catch{setToast(t.error)}finally{setBusy(v=>Math.max(0,v-1));}}}><RotateCcw size={14}/>{t.reprocess}</button>{r.status!=='confirmed'&&<button className="primary-btn compact" onClick={()=>confirmReport(r)}><CheckCircle2 size={15}/>{t.confirm}</button>}</div></div>
      </article>)}</div>
    </section>
    <section className="panel summary-panel" ref={rightRef}><div className="panel-heading summary-head"><div><div className="eyebrow">02 / RECONCILIATION</div><h2>{t.summary}</h2><p>{t.summarySub}</p></div><div className="month-picker"><span>{t.month}</span><input type="month" value={month} onChange={e=>setMonth(e.target.value)}/></div></div>
@@ -140,7 +167,7 @@ function App(){
   </main>
   {settingsOpen&&<div className="modal-backdrop" onClick={()=>setSettingsOpen(false)}><section className="settings-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">CONFIGURATION</div><h2>{t.settings}</h2></div><button className="icon-btn" onClick={()=>setSettingsOpen(false)}><X size={18}/></button></div><p className="modal-note">{t.settingsNote}</p><div className="add-category"><input value={newCategory} onChange={e=>setNewCategory(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addCategory()} placeholder={t.add}/><button className="primary-btn" onClick={addCategory}><Plus size={16}/>{t.add}</button></div><div className="category-settings">{categories.map((c,i)=><div key={c.id} className="category-setting"><span className="category-number">{String(i+1).padStart(2,'0')}</span><input value={c.name} onChange={e=>setCategories(prev=>prev.map(x=>x.id===c.id?{...x,name:e.target.value}:x))}/><label className="toggle"><input type="checkbox" checked={c.active} onChange={e=>setCategories(prev=>prev.map(x=>x.id===c.id?{...x,active:e.target.checked}:x))}/><span/></label><button className="tiny-icon danger" title={t.remove} onClick={()=>setCategories(prev=>prev.filter(x=>x.id!==c.id))}><Trash2 size={14}/></button></div>)}</div><div className="modal-actions"><button className="secondary-btn" onClick={()=>setCategories(INITIAL.map((name,i)=>({id:`issue-${i+1}`,name,active:true})))}><RotateCcw size={15}/>{t.reprocess}</button><button className="danger-btn" onClick={()=>{if(confirm(t.clearAsk)){setReports([]);setSettingsOpen(false);}}}><Trash2 size={15}/>{t.clearX||t.clear||'Clear'}</button><button className="primary-btn" onClick={()=>setSettingsOpen(false)}>{t.save}</button></div></section></div>}
   {busy>0&&<div className="processing-pill"><span className="spinner"/>{t.processing} <b>{busy}</b></div>}{toast&&<div className="toast"><CheckCircle2 size={16}/>{toast}<button onClick={()=>setToast('')}><X size={14}/></button></div>}
-  <footer className="app-footer"><span>QT REPORT AGGREGATOR <b>v1.0</b></span><span>LOCAL-FIRST · OCR · RECONCILIATION</span></footer>
+  <footer className="app-footer"><span>QT REPORT AGGREGATOR <b>v1.1 OCR ENGINE</b></span><span>LOCAL-FIRST · OCR · RECONCILIATION</span></footer>
  </div>
 }
 
