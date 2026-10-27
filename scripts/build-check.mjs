@@ -1,0 +1,12 @@
+import { access, readFile, mkdir, copyFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+const root=process.cwd();
+for (const p of ['index.html','src/app.js','src/styles.css','supabase/schema.sql','vercel.json']) await access(resolve(root,p));
+const html=await readFile(resolve(root,'index.html'),'utf8');
+const js=await readFile(resolve(root,'src/app.js'),'utf8');
+if(!html.includes('src/app.js')||!js.includes('QT Report Aggregator')) throw new Error('Required entry points missing');
+await mkdir(resolve(root,'dist'),{recursive:true});
+for(const p of ['index.html','vercel.json']) await copyFile(resolve(root,p),resolve(root,'dist',p));
+await mkdir(resolve(root,'dist/src'),{recursive:true});
+for(const p of ['src/app.js','src/styles.css']) await copyFile(resolve(root,p),resolve(root,'dist',p));
+console.log('Static production build passed: dist/ created. Runtime OCR/cloud integration still requires browser/configuration testing.');

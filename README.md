@@ -1,58 +1,33 @@
-# QT Report Aggregator
+# QT Report Aggregator 2.0
 
-A local-first web app for consolidating the structured Chinese QT software issue-statistics screenshots.
+A rebuilt static web app with a desktop two-column / mobile one-column layout, Chinese/Vietnamese/English UI, client-side OCR, explicit reconciliation gates, image duplicate hashing, edit/review queue, local persistence, CSV (Excel-compatible) and PNG export.
 
-## Stack
-- React + Vite
-- Tesseract.js OCR (browser-side, no Gemini API dependency)
-- IndexedDB for durable local browser storage
-- SheetJS for `.xlsx` export
-- Canvas for PNG report export
-- Vercel static deployment
+## Run and build
+Requires Node.js 18+.
 
-## Run locally
 ```bash
-npm install
 npm run dev
-```
-
-## Build
-```bash
+npm test
 npm run build
-npm run preview
 ```
 
-## Deploy
-1. Push this directory to a GitHub repository.
-2. Import that repository into Vercel.
-3. Framework preset: Vite; Build command: `npm run build`; Output directory: `dist`.
-4. No environment variables are required for this local-first version.
+`npm run build` performs a static production packaging check and writes `dist/`. This project intentionally uses no build-time third-party dependencies. OCR loads Tesseract.js and its Chinese/English language data from jsDelivr on first use, so first recognition requires network access. Mobile performance depends on the device and browser.
 
-## OCR notes
-OCR is run in the browser using Tesseract.js and the Chinese Simplified + English language packs. The first run needs network access to download the OCR worker/language data; browser caching may speed later runs. Extracted values are marked for review before inclusion in totals. This is deliberate: low-confidence OCR must not silently corrupt a monthly report.
+## Vercel
+Import the repository and use build command `npm run build`, output directory `dist`. This is a static deployment. Deployment has NOT been performed by this source package.
 
-## Persistence / scope
-- Reports, category names and language choice are stored in IndexedDB and survive refreshes on the same browser profile/device.
-- This is not cloud synchronization. If several staff need a shared, central dataset, add a database and authentication before using it as a team-wide source of truth.
-- The image's row structure may vary. Always inspect each OCR result and correct values before confirming.
+## OCR accuracy and safeguards
+- Browser-side Tesseract.js; first attempt plus contrast-enhanced retry.
+- Text parsing is conservative and only accepts a row if a row number or exact Chinese label can be associated with two numeric cells. OCR parsing of perspective photos is inherently imperfect.
+- Confirmation is blocked unless all 16 rows are considered read, values are valid, and both totals read from the source image match calculated sums. This is a safety gate, not a guarantee that OCR has 100% accuracy.
+- Optional fallback endpoint can be configured in Settings. It receives the full image as base64. You must deploy and secure that endpoint yourself; no paid AI provider is configured by default and no fallback costs occur unless configured.
+- Identical image bytes are hashed with SHA-256; duplicates require an explicit override. A database unique constraint on image_hash is also provided.
 
-## Security
-Images are processed client-side. Do not upload sensitive screenshots to third-party OCR APIs. The Vercel deployment serves static assets only and does not store uploaded images centrally.
+## Persistence and cloud
+Local browser storage uses localStorage for the report records/config. It survives refreshes on the same browser profile, but is not cross-device and can be cleared by browser settings. For team sync, create a Supabase project, run `supabase/schema.sql`, then enter the project URL and public anon key in Settings. Never put a service-role key in the browser. The included RLS policy is per-user, not shared-team access. To enable shared team reporting, add a team membership model and policies before production use. Cloud sync currently writes confirmed reports; initial cross-device pull/auth UI and conflict-resolution are not implemented yet, so treat cloud integration as a starter adapter, not a finished multi-user system.
 
-## v1.0.1 OCR safety patch
-- Removed the page-level drop handler; the drop-zone handler stops propagation to prevent the same drag/drop from processing twice.
-- OCR now upscales and mildly normalizes contrast before Tesseract recognition.
-- Removed fuzzy character-overlap category matching, which could attach a row to the wrong issue type.
-- Rows with insufficient numeric structure remain flagged for review rather than being silently treated as reliable zeros.
-- If the printed grand total can be read, confirmation is blocked when the sum of row occurrences does not match it. If OCR confidence/row parsing is uncertain, an explicit review warning appears.
+## Exports
+The export button creates UTF-8 CSV that opens in Excel. It is not a native `.xlsx` workbook. PNG is rendered from the monthly summary.
 
-Important: this is a safer failure mode, not a guarantee of 100% OCR accuracy. Photographed, skewed, moiré-heavy or blurry tables still require row-by-row verification. Do not treat unverified OCR output as final accounting data.
-
-## v1.2 validation and usability update
-- Page-level Tesseract confidence is now diagnostic only; it does not independently block a report when every row is parsed, row values are valid, and the printed occurrence/resolved totals match.
-- Added independent reconciliation for both `发生次数` and `已处理` totals when both are legible in the footer.
-- Confirmation still remains blocked for missing rows, invalid row values, missing printed occurrence total, or total mismatch.
-- Increased touch targets, numeric input sizes, review card spacing, table row padding and mobile layouts to reduce accidental taps/drags.
-- Removed a duplicated IndexedDB save effect.
-
-Build status note: dependency installation could not be completed in this environment due to timeout, so run `npm install` and `npm run build` before deploying this archive.
+## Test limits
+Build checks validate required source files and create `dist/`. They do not prove OCR accuracy on all images, browser compatibility, Supabase permissions, or successful Vercel deployment. Test with a known set of real reports before production use.
