@@ -22,11 +22,10 @@
             }
         }
     </script>
-    <!-- Vue 3, SheetJS, html2canvas & Tesseract.js (Local OCR Fallback) -->
+    <!-- Vue 3 & SheetJS & html2canvas -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <script src="https://unpkg.com/tesseract.js@v5.1.0/dist/tesseract.min.js"></script>
     <style>
         .glass-panel { background: rgba(30, 41, 59, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -100,7 +99,7 @@
                 <!-- Hộp thoại Báo lỗi chi tiết -->
                 <div v-if="lastError" class="glass-panel rounded-xl p-3 shrink-0 border border-rose-500/40 bg-rose-950/20 text-xs space-y-1">
                     <div class="font-bold text-rose-400 flex justify-between items-center">
-                        <span>⚠️ System Log & Fallback Notice</span>
+                        <span>⚠️ System Log & Error</span>
                         <button @click="lastError = null" class="text-slate-400 hover:text-white">✕</button>
                     </div>
                     <p class="text-slate-300 break-words font-mono text-[11px]">{{ lastError }}</p>
@@ -238,8 +237,8 @@
                 title: "QT软件使用问题统计汇总",
                 todayQuota: "今日进度",
                 totalLoaded: "已加载报告",
-                dropzoneText: "点击或拖放报告截图到此处 (支持多源智能备用)",
-                dropzoneSub: "极速双引擎：Gemini云端 AI + 本地 Tesseract 备用",
+                dropzoneText: "点击或拖放报告截图到此处 (支持 Telegram 复制粘贴)",
+                dropzoneSub: "已升级至 Gemini-3.8-Flash 极速视觉引擎",
                 historyTitle: "已处理报告历史",
                 clearAll: "清空全部",
                 noData: "暂无数据，请上传报告图片",
@@ -263,7 +262,7 @@
                 todayQuota: "Tiến độ hôm nay",
                 totalLoaded: "Đã nạp",
                 dropzoneText: "Kéo thả, bấm chọn hoặc dán ảnh từ Telegram (Ctrl+V)",
-                dropzoneSub: "Động cơ kép: Gemini AI + OCR cục bộ dự phòng",
+                dropzoneSub: "Đã nâng cấp model Gemini-3.8-Flash nhận diện chuẩn xác",
                 historyTitle: "Lịch sử báo cáo",
                 clearAll: "Xóa tất cả",
                 noData: "Chưa có dữ liệu, hãy tải ảnh lên",
@@ -287,7 +286,7 @@
                 todayQuota: "Today Quota",
                 totalLoaded: "Loaded",
                 dropzoneText: "Drag & drop, click, or paste from Telegram",
-                dropzoneSub: "Dual Engine: Gemini Cloud AI + Local Tesseract Fallback",
+                dropzoneSub: "Upgraded to Gemini-3.8-Flash Vision Engine",
                 historyTitle: "Report History",
                 clearAll: "Clear All",
                 noData: "No data yet. Upload reports.",
@@ -393,6 +392,12 @@
                 };
 
                 const processFiles = async (files) => {
+                    if (!apiKey.value) {
+                        alert("Please configure your Gemini API Key first!");
+                        openApiKeyModal();
+                        return;
+                    }
+
                     isProcessing.value = true;
                     progressPercent.value = 0;
                     lastError.value = null;
@@ -407,7 +412,7 @@
                             const reader = new FileReader();
                             reader.onload = async (event) => {
                                 const base64Data = event.target.result;
-                                await processImageWithMultiTierFallback(base64Data, file.name || "telegram_paste.jpg");
+                                await processImageWithGeminiAI(base64Data, file.name || "telegram_paste.jpg");
                                 resolve();
                             };
                             reader.readAsDataURL(file);
@@ -420,138 +425,83 @@
                     }, 500);
                 };
 
-                // CHIẾN LƯỢC ĐA TẦNG DỰ PHÒNG (MULTI-TIER FAILOVER)
-                const processImageWithMultiTierFallback = async (base64Data, fileName) => {
-                    let parsedData = null;
-                    let executionLog = [];
-
-                    // TẦNG 1: Ưu tiên dùng Gemini AI (nếu có Key) vì độ chính xác tuyệt đối
-                    if (apiKey.value) {
-                        try {
-                            parsedData = await callGeminiAPI(base64Data);
-                            executionLog.push("✅ Success via Gemini Cloud AI.");
-                        } catch (err) {
-                            executionLog.push(`⚠️ Gemini Failed: ${err.message}. Switching to Local OCR Fallback...`);
-                        }
-                    } else {
-                        executionLog.push("ℹ️ No API Key provided. Running Local OCR directly.");
-                    }
-
-                    // TẦNG 2: Nếu Gemini lỗi hoặc không có Key, tự động chuyển sang Tesseract.js (Local OCR Siêu Tốc)
-                    if (!parsedData) {
-                        try {
-                            parsedData = await callLocalTesseractOCR(base64Data);
-                            executionLog.push("✅ Success via Local Tesseract OCR Fallback.");
-                        } catch (err2) {
-                            executionLog.push(`❌ Local OCR Failed: ${err2.message}`);
-                        }
-                    }
-
-                    // Nếu cả 2 tầng đều không đọc được, tạo cấu trúc mặc định để không làm sập bảng, đồng thời báo lỗi chi tiết
-                    if (!parsedData) {
-                        lastError.value = executionLog.join(" | ");
-                        alert(`Failed to process ${fileName}. Details: ${lastError.value}`);
-                        return;
-                    }
-
-                    // Lưu lịch sử thành công
-                    let sumOcc = parsedData.items.reduce((acc, item) => acc + item.occurrences, 0);
-                    let isValid = (Math.abs(sumOcc - parsedData.totalOccurrences) <= 2); // Dung sai nhỏ cho OCR local
-
-                    const newReport = {
-                        id: Date.now() + Math.random(),
-                        fileName: fileName,
-                        date: new Date().toLocaleString(),
-                        thumbnail: base64Data,
-                        items: parsedData.items,
-                        grandTotal: parsedData.totalOccurrences,
-                        isValid: isValid
-                    };
-
-                    reports.value.unshift(newReport);
-                    localStorage.setItem('qt_reports_data', JSON.stringify(reports.value));
-                    if (executionLog.length > 1) {
-                        lastError.value = executionLog.join(" | "); // Lưu vết log nếu có dùng fallback
-                    }
-                };
-
-                // Gọi Gemini API chính thức (`gemini-2.5-flash`)
-                const callGeminiAPI = async (base64Data) => {
+                // SỬ DỤNG ĐÚNG CHUẨN MODEL GEMINI-3.8-FLASH
+                const processImageWithGeminiAI = async (base64Data, fileName) => {
                     const base64Image = base64Data.split(',')[1];
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey.value}`;
-                    
-                    const prompt = `Analyze this QT software issue statistics report image ("QT软件使用问题统计"). Extract the items into a JSON format with structure:
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey.value}`;
+
+                    const prompt = `You are a professional data extractor. Analyze this exact QT software issue statistics report image ("QT软件使用问题统计"). 
+                    Extract the exact numbers for all 16 rows corresponding to these exact problem types:
+                    1. 节点超时/线路异常
+                    2. 注册来源为空
+                    3. 证书问题
+                    4. 讯息发送/接受异常
+                    5. 网域被墙/拦截
+                    6. 下载链接/浏览器异常
+                    7. 场地IP被拉黑
+                    8. 无法注册
+                    9. 安装问题
+                    10. 网页版问题
+                    11. 密保问题
+                    12. 设备限制
+                    13. 三方线路异常
+                    14. 无法登录
+                    15. 登录验证问题
+                    16. QT功能问题
+
+                    Return ONLY valid JSON format like this, strictly verify occurrences and processed numbers from the table:
                     {
                       "items": [
                         { "id": 1, "name": "节点超时/线路异常", "occurrences": 2, "processed": 2 }
                       ],
                       "totalOccurrences": 12,
                       "totalProcessed": 12
-                    }
-                    Ensure exact numbers are extracted. Return ONLY valid JSON.`;
+                    }`;
 
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{
-                                parts: [
-                                    { text: prompt },
-                                    { inline_data: { mime_type: "image/jpeg", data: base64Image } }
-                                ]
-                            }]
-                        })
-                    });
-
-                    const result = await response.json();
-                    if (result.error) throw new Error(result.error.message);
-                    if (!result.candidates || !result.candidates[0]) throw new Error("No candidates from Gemini.");
-
-                    const textResponse = result.candidates[0].content.parts[0].text;
-                    const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
-                    if (!jsonMatch) throw new Error("Invalid JSON from Gemini response.");
-
-                    return JSON.parse(jsonMatch[0]);
-                };
-
-                // Dự phòng cục bộ cực nhanh bằng Tesseract.js (Chạy ngay trong trình duyệt không cần mạng)
-                const callLocalTesseractOCR = async (base64Data) => {
-                    processingStatusText.value = "Running Local OCR Fallback...";
-                    const worker = await Tesseract.createWorker('chi_sim+eng');
-                    const ret = await worker.recognize(base64Data);
-                    await worker.terminate();
-
-                    const text = ret.data.text;
-                    // Thuật toán bóc tách dữ liệu thô từ văn bản OCR cục bộ
-                    let items = [];
-                    let totalOcc = 0;
-                    
-                    defaultCategories.forEach((cat, idx) => {
-                        // Tìm số liệu xuất hiện gần tên mục trong văn bản thô
-                        items.push({
-                            id: idx + 1,
-                            name: cat,
-                            occurrences: 0,
-                            processed: 0
+                    try {
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{
+                                    parts: [
+                                        { text: prompt },
+                                        { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+                                    ]
+                                }]
+                            })
                         });
-                    });
 
-                    // Cố gắng dò các con số trong text OCR
-                    const numbers = text.match(/\d+/g) || [];
-                    let numIdx = 0;
-                    items.forEach(it => {
-                        if (numIdx < numbers.length) {
-                            it.occurrences = parseInt(numbers[numIdx++]) || 0;
-                            it.processed = it.occurrences; // Mặc định đã xử lý bằng số phát sinh nếu OCR local đọc nhanh
-                            totalOcc += it.occurrences;
-                        }
-                    });
+                        const result = await response.json();
+                        if (result.error) throw new Error(result.error.message);
+                        if (!result.candidates || !result.candidates[0]) throw new Error("No candidates returned.");
 
-                    return {
-                        items: items,
-                        totalOccurrences: totalOcc || 12,
-                        totalProcessed: totalOcc || 12
-                    };
+                        const textResponse = result.candidates[0].content.parts[0].text;
+                        const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
+                        if (!jsonMatch) throw new Error("Invalid JSON from AI.");
+
+                        const parsedData = JSON.parse(jsonMatch[0]);
+
+                        // Đối soát tổng số
+                        let sumOcc = parsedData.items.reduce((acc, item) => acc + item.occurrences, 0);
+                        let isValid = (sumOcc === parsedData.totalOccurrences);
+
+                        const newReport = {
+                            id: Date.now() + Math.random(),
+                            fileName: fileName,
+                            date: new Date().toLocaleString(),
+                            thumbnail: base64Data,
+                            items: parsedData.items,
+                            grandTotal: parsedData.totalOccurrences,
+                            isValid: isValid
+                        };
+
+                        reports.value.unshift(newReport);
+                        localStorage.setItem('qt_reports_data', JSON.stringify(reports.value));
+                    } catch (err) {
+                        lastError.value = `${fileName} Error: ${err.message}`;
+                        alert(lastError.value);
+                    }
                 };
 
                 const removeReport = (id) => {
