@@ -7,3 +7,6 @@ test('missing or mismatched printed totals fall back to sums only after all 16 r
 test('duplicate fingerprint and unique database key exist',async()=>{assert.match(app,/SHA-256/);const schema=await readFile(new URL('../supabase/schema.sql',import.meta.url),'utf8');assert.match(schema,/image_hash.*unique|unique\s*\(image_hash\)/i)});
 test('batch OCR is serialized through one worker',()=>{assert.match(app,/async function processQueue\(\)/);assert.match(app,/await ocr\(q,false\)/)});
 test('reset, cross-trace, backlog warnings and aliases are present',()=>{for(const x of ['resetQueue','resetMonth','resetAll','undoLast','data-trace','warnpill','aliasModal'])assert.ok(app.includes(x),x)});
+
+test('manual approval requires all rows reviewed and explicit user confirmation',()=>{assert.match(app,/function manualApprove\(id\)/);assert.match(app,/if\(!q\.rowsComplete\)/);assert.match(app,/if\(!confirm\(summary\)\)return/);assert.match(app,/manualApproved:true/)});
+test('manual review button is disabled until all rows are complete',()=>{assert.match(app,/data-manual-approve=\"\$\{q\.id\}\" \$\{q\.rowsComplete&&!q\.ok\?'':'disabled'\}/)});

@@ -35,3 +35,14 @@ Build checks validate required source files and create `dist/`. They do not prov
 
 ## Important limitation
 This is a static browser app. It has not been deployed to GitHub/Vercel from this workspace. Browser OCR still requires network access to load Tesseract.js and Chinese language data on first run. The source package has passed syntax/build checks and automated structural tests, but must be verified in a real browser against the team’s image set before production use.
+
+
+## v2.1.2: Manual review and approval
+
+- Keeps automatic confirmation restricted to rows that are complete and whose printed totals reconcile (or when all 16 rows are complete and printed totals are unread, per the existing validation policy).
+- Adds an explicit manual approval path for OCR failures or unread/mismatched printed totals. The user must inspect all 16 rows, correct uncertain values, mark the rows as reviewed, and confirm a warning dialog before the record enters monthly totals.
+- Manual approvals are stored with `manualApproved`, the calculated row totals, and an audit note.
+- The manual approval button remains disabled until all 16 rows have been marked reviewed and validated.
+- Existing reset controls, batch queue, duplicate protection, trace filtering, backlog warnings, aliases, exports, and settings are retained.
+
+Validation: `npm test` and `npm run build`. Real browser OCR still needs testing with the actual report images and target deployment.
