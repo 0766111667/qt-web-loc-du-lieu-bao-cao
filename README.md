@@ -47,3 +47,12 @@ Images are processed client-side. Do not upload sensitive screenshots to third-p
 - If the printed grand total can be read, confirmation is blocked when the sum of row occurrences does not match it. If OCR confidence/row parsing is uncertain, an explicit review warning appears.
 
 Important: this is a safer failure mode, not a guarantee of 100% OCR accuracy. Photographed, skewed, moiré-heavy or blurry tables still require row-by-row verification. Do not treat unverified OCR output as final accounting data.
+
+## v1.2 validation and usability update
+- Page-level Tesseract confidence is now diagnostic only; it does not independently block a report when every row is parsed, row values are valid, and the printed occurrence/resolved totals match.
+- Added independent reconciliation for both `发生次数` and `已处理` totals when both are legible in the footer.
+- Confirmation still remains blocked for missing rows, invalid row values, missing printed occurrence total, or total mismatch.
+- Increased touch targets, numeric input sizes, review card spacing, table row padding and mobile layouts to reduce accidental taps/drags.
+- Removed a duplicated IndexedDB save effect.
+
+Build status note: dependency installation could not be completed in this environment due to timeout, so run `npm install` and `npm run build` before deploying this archive.
