@@ -22,41 +22,73 @@ async function dbGet(key){try{const db=await openDB();return await new Promise((
 async function dbSet(key,value){const db=await openDB();return new Promise((res,rej)=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put(value,key);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});}
 function fmt(n){return Number(n||0).toLocaleString('zh-CN');}
 function totalOf(rows,key){return rows.reduce((s,r)=>s+Number(r.values?.[key]?.[key==='occur'?'occur':'done']||0),0)}
+function normalizeOcrText(s){
+  return String(s||'').toLowerCase().replace(/[\s/（）()·.\-_:：|]/g,'').replace(/[０-９]/g,ch=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0));
+}
 function parseOcr(text, categories){
   const lines=text.split(/\n+/).map(s=>s.trim()).filter(Boolean);
-  const result={}; const unmatched=[];
-  for(const c of categories){result[c.id]={occur:0,done:0,confidence:0};}
+  const result={}; const unmatched=[]; let expectedTotal=null;
+  for(const c of categories) result[c.id]={occur:0,done:0,confidence:0,needsReview:true};
   for(const line of lines){
+    const source=normalizeOcrText(line);
     const nums=(line.match(/\d+(?:\.\d+)?/g)||[]).map(Number);
-    if(nums.length<2)continue;
-    let best=null, score=0;
-    for(const c of categories){
-      const label=c.name.toLowerCase().replace(/[\s/（）()·.-]/g,'');
-      const source=line.toLowerCase().replace(/[\s/（）()·.-]/g,'');
-      let s=source.includes(label)?label.length:0;
-      if(!s){const chars=[...label];s=chars.filter(ch=>source.includes(ch)).length/Math.max(chars.length,1);}
-      if(s>score){score=s;best=c;}
+    // Read the printed grand-total row separately. It is a reconciliation guard,
+    // never a substitute for reading individual rows.
+    if(/总计|合计|total/i.test(line) && nums.length>=2){
+      const ints=nums.map(n=>Math.round(n));
+      expectedTotal=ints.length>=3?ints[ints.length-3]:ints[0];
+      continue;
     }
-    if(best&&score>=0.55){
-      // QT template lines may contain serial number + occurrence + resolved + percentage.
-      // Take the two values immediately before the trailing percentage when present.
-      const offset = nums.length >= 4 ? nums.length - 3 : nums.length - 2;
-      result[best.id]={occur:Math.max(0,Math.round(nums[offset])),done:Math.max(0,Math.round(nums[offset+1])),confidence:Math.min(99,Math.round(score*100))};
+    let matches=[];
+    for(const c of categories){
+      const label=normalizeOcrText(c.name);
+      // Deliberately avoid fuzzy character overlap: it can assign a row to the wrong category.
+      if(label && source.includes(label)) matches.push(c);
+    }
+    if(matches.length!==1) { if(nums.length>=2) unmatched.push(line); continue; }
+    const cat=matches[0];
+    // Typical row: serial, occurrences, resolved, percentage. Only accept rows
+    // with enough numeric structure to distinguish the serial from the values.
+    if(nums.length>=4){
+      const occur=Math.round(nums[1]), done=Math.round(nums[2]);
+      result[cat.id]={occur,done,confidence:95,needsReview:false};
+    } else if(nums.length===3){
+      // Serial + occurrences + resolved, with percentage omitted by OCR.
+      result[cat.id]={occur:Math.round(nums[1]),done:Math.round(nums[2]),confidence:75,needsReview:true};
+    } else {
+      unmatched.push(line);
     }
   }
-  return {values:result,unmatched};
+  const sum=Object.values(result).reduce((n,v)=>n+v.occur,0);
+  const hasUncertain=Object.values(result).some(v=>v.needsReview);
+  return {values:result,unmatched,expectedTotal,totalMatches:expectedTotal===null?null:sum===expectedTotal,needsReview:hasUncertain||expectedTotal===null||sum!==expectedTotal};
+}
+async function preprocessForOcr(file){
+  // Upscale and normalize illumination mildly. Avoid hard binarization, which can
+  // erase thin Chinese strokes in photographed/moire-heavy tables.
+  const url=URL.createObjectURL(file);
+  try {
+    const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=url;});
+    const scale=Math.min(2.2,2400/Math.max(img.naturalWidth,img.naturalHeight));
+    const canvas=document.createElement('canvas'); canvas.width=Math.round(img.naturalWidth*scale); canvas.height=Math.round(img.naturalHeight*scale);
+    const ctx=canvas.getContext('2d',{willReadFrequently:true}); ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    const frame=ctx.getImageData(0,0,canvas.width,canvas.height); const d=frame.data;
+    for(let i=0;i<d.length;i+=4){const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; const c=Math.max(0,Math.min(255,(g-118)*1.22+145)); d[i]=d[i+1]=d[i+2]=c;}
+    ctx.putImageData(frame,0,0);
+    return await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('preprocess failed')),'image/png'));
+  } finally { URL.revokeObjectURL(url); }
 }
 async function recognizeImage(file,categories){
   const worker=await createWorker('chi_sim+eng',1,{logger:()=>{}});
   try{
     await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:'6'});
-    const {data}=await worker.recognize(file);
+    const prepared=await preprocessForOcr(file);
+    const {data}=await worker.recognize(prepared);
     const parsed=parseOcr(data.text,categories);
-    // Do not guess values from a flat list of numbers: serial numbers and percentages
-    // can otherwise be mistaken for occurrence counts. Unmatched rows stay at zero for review.
-    return {...parsed, rawText:data.text, confidence:Math.round(data.confidence||0)};
+    return {...parsed,rawText:data.text,confidence:Math.round(data.confidence||0)};
   } finally { await worker.terminate(); }
 }
+
 function App(){
  const [lang,setLang]=useState('zh'); const t=TEXT[lang];
  const [categories,setCategories]=useState(INITIAL.map((name,i)=>({id:`issue-${i+1}`,name,active:true})));
@@ -72,19 +104,19 @@ function App(){
  const confirmed=monthReports.filter(r=>r.status==='confirmed');
  const totals=useMemo(()=>{const map={};activeCats.forEach(c=>map[c.id]={occur:0,done:0});confirmed.forEach(r=>activeCats.forEach(c=>{map[c.id].occur+=Number(r.values?.[c.id]?.occur||0);map[c.id].done+=Number(r.values?.[c.id]?.done||0);}));const occur=Object.values(map).reduce((s,v)=>s+v.occur,0),done=Object.values(map).reduce((s,v)=>s+v.done,0);return {map,occur,done};},[activeCats,confirmed]);
  const dayCount=reports.filter(r=>r.date===todayISO()&&r.status==='confirmed').length;
- const processFiles=useCallback(async(files)=>{const arr=Array.from(files||[]).filter(f=>f.type.startsWith('image/'));if(!arr.length)return;setBusy(v=>v+arr.length);for(const file of arr){const id=uid();const report={id,name:file.name||`pasted-${new Date().toISOString()}.png`,date:todayISO(),shift:'',source:'',status:'processing',values:emptyValues(categories),rawText:'',confidence:0,createdAt:new Date().toISOString(),image:null};try{report.image=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});setReports(prev=>[report,...prev]);const result=await recognizeImage(file,categories);report.values=result.values;report.rawText=result.rawText;report.confidence=result.confidence;report.status='review';setReports(prev=>prev.map(r=>r.id===id?{...report}:r));setToast(t.review);}catch(e){report.status='review';report.rawText=`OCR error: ${e?.message||e}`;setReports(prev=>prev.map(r=>r.id===id?{...report}:r));setToast(t.error);}finally{setBusy(v=>Math.max(0,v-1));}}},[categories,t]);
+ const processFiles=useCallback(async(files)=>{const arr=Array.from(files||[]).filter(f=>f.type.startsWith('image/'));if(!arr.length)return;setBusy(v=>v+arr.length);for(const file of arr){const id=uid();const report={id,name:file.name||`pasted-${new Date().toISOString()}.png`,date:todayISO(),shift:'',source:'',status:'processing',values:emptyValues(categories),rawText:'',confidence:0,createdAt:new Date().toISOString(),image:null};try{report.image=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});setReports(prev=>[report,...prev]);const result=await recognizeImage(file,categories);report.values=result.values;report.rawText=result.rawText;report.confidence=result.confidence;report.expectedTotal=result.expectedTotal;report.totalMatches=result.totalMatches;report.needsReview=result.needsReview;report.status='review';setReports(prev=>prev.map(r=>r.id===id?{...report}:r));setToast(t.review);}catch(e){report.status='review';report.rawText=`OCR error: ${e?.message||e}`;setReports(prev=>prev.map(r=>r.id===id?{...report}:r));setToast(t.error);}finally{setBusy(v=>Math.max(0,v-1));}}},[categories,t]);
  const onFiles=e=>{processFiles(e.target.files);e.target.value='';};
  useEffect(()=>{const paste=e=>{const items=Array.from(e.clipboardData?.items||[]);const files=items.filter(i=>i.type.startsWith('image/')).map(i=>i.getAsFile()).filter(Boolean);if(files.length){e.preventDefault();processFiles(files);}};window.addEventListener('paste',paste);return()=>window.removeEventListener('paste',paste);},[processFiles]);
  const updateReport=(id,patch)=>setReports(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
  const updateValue=(reportId,catId,key,value)=>setReports(prev=>prev.map(r=>r.id===reportId?{...r,values:{...r.values,[catId]:{...(r.values?.[catId]||{}),[key]:Math.max(0,Number(value)||0)}}}:r));
- const confirmReport=r=>{for(const c of activeCats){const v=r.values?.[c.id]||{};if(Number(v.done||0)>Number(v.occur||0)){setToast(`${c.name}: 已处理不能大于发生次数`);return;}}updateReport(r.id,{status:'confirmed'});setToast(t.accepted);};
+ const confirmReport=r=>{for(const c of activeCats){const v=r.values?.[c.id]||{};if(Number(v.done||0)>Number(v.occur||0)){setToast(`${c.name}: 已处理不能大于发生次数`);return;}}const sum=activeCats.reduce((n,c)=>n+Number(r.values?.[c.id]?.occur||0),0);if(r.expectedTotal!=null&&sum!==Number(r.expectedTotal)){setToast(`总计对不上：明细 ${sum}，图片总计 ${r.expectedTotal}。请先修改明细。`);return;}if(r.needsReview){const ok=window.confirm('部分 OCR 行未能可靠识别或总计未识别。确认前请逐行对照原图。仍要计入汇总吗？');if(!ok)return;}updateReport(r.id,{status:'confirmed'});setToast(t.accepted);};
  const deleteReport=id=>{setReports(prev=>prev.filter(r=>r.id!==id));setToast(t.remove);};
  const addCategory=()=>{const name=newCategory.trim();if(!name)return;if(categories.some(c=>c.name.toLowerCase()===name.toLowerCase())){setToast('Already exists');return;}setCategories(prev=>[...prev,{id:uid(),name,active:true}]);setNewCategory('');};
  const exportExcel=()=>{const wsData=[[t.month,month],[t.issue,t.occur,t.done,t.share],...activeCats.map(c=>[c.name,totals.map[c.id]?.occur||0,totals.map[c.id]?.done||0,totals.occur?((totals.map[c.id]?.occur||0)/totals.occur*100).toFixed(1)+'%':'0%']),[t.total,totals.occur,totals.done,totals.occur?'100%':'0%']];const ws=XLSX.utils.aoa_to_sheet(wsData);ws['!cols']=[{wch:34},{wch:16},{wch:16},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'QT Report');const log=XLSX.utils.aoa_to_sheet([[t.report,t.date,t.shiftLabel,t.issue,t.occur,t.done,'Status'],...monthReports.flatMap(r=>activeCats.map(c=>[r.name,r.date,r.shift,c.name,r.values?.[c.id]?.occur||0,r.values?.[c.id]?.done||0,r.status]))]);XLSX.utils.book_append_sheet(wb,log,'Raw reports');XLSX.writeFile(wb,`QT-Report-${month}.xlsx`);};
  const exportPng=()=>{const canvas=document.createElement('canvas');canvas.width=1500;canvas.height=100+activeCats.length*42+70;const ctx=canvas.getContext('2d');ctx.fillStyle='#0b1222';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#e8efff';ctx.font='bold 30px Arial';ctx.fillText(`QT Report · ${month}`,42,48);ctx.fillStyle='#8da4c9';ctx.font='16px Arial';ctx.fillText(`${t.issue}                                      ${t.occur}                         ${t.done}                      ${t.share}`,42,84);activeCats.forEach((c,i)=>{const y=120+i*42;ctx.fillStyle=i%2?'#111d32':'#17243a';ctx.fillRect(30,y-27,1440,38);ctx.fillStyle='#e8efff';ctx.font='18px Arial';ctx.fillText(`${i+1}. ${c.name}`,48,y);ctx.fillText(String(totals.map[c.id]?.occur||0),780,y);ctx.fillText(String(totals.map[c.id]?.done||0),1040,y);ctx.fillStyle='#f3b84d';ctx.fillText(totals.occur?`${((totals.map[c.id]?.occur||0)/totals.occur*100).toFixed(1)}%`:'0%',1280,y);});const y=130+activeCats.length*42;ctx.fillStyle='#f3b84d';ctx.font='bold 20px Arial';ctx.fillText(`${t.total}     ${totals.occur}                         ${totals.done}                      ${totals.occur?'100%':'0%'}`,48,y);const a=document.createElement('a');a.download=`QT-Report-${month}.png`;a.href=canvas.toDataURL('image/png');a.click();};
  const shownReports=monthReports.filter(r=>(filter==='all'||(filter==='review'?r.status!=='confirmed':r.status==='confirmed'))&&`${r.name} ${r.source} ${r.date}`.toLowerCase().includes(query.toLowerCase()));
- const handleDrop=e=>{e.preventDefault();processFiles(e.dataTransfer.files);};
- return <div className="app-shell" onDragOver={e=>e.preventDefault()} onDrop={handleDrop}>
+ const handleDrop=e=>{e.preventDefault();e.stopPropagation();processFiles(e.dataTransfer.files);};
+ return <div className="app-shell">
   <header className="topbar"><div className="brand"><div className="brand-mark"><Activity size={21}/></div><div><h1>{t.title}</h1><p>{t.sub}</p></div></div><div className="top-actions"><div className="save-state"><span className="pulse-dot"/>{t.saved}</div><button className="icon-btn" title={t.settings} onClick={()=>setSettingsOpen(v=>!v)}><Settings2 size={18}/></button><div className="language"><Languages size={16}/><select aria-label={t.lang} value={lang} onChange={e=>setLang(e.target.value)}><option value="zh">中文</option><option value="vi">Tiếng Việt</option><option value="en">English</option></select></div></div></header>
   <section className="stats-row"><div className="stat-card"><div className="stat-icon purple"><FileImage size={19}/></div><div><span>{t.today}</span><strong>{dayCount}<small> / 3 {t.shift}</small></strong><div className="progress"><i style={{width:`${Math.min(100,dayCount/3*100)}%`}}/></div></div><div className="stat-note">{Math.min(3,dayCount)}/3</div></div><div className="stat-card"><div className="stat-icon blue"><Archive size={19}/></div><div><span>{t.summary}</span><strong>{fmt(confirmed.length)}<small> {t.report}</small></strong><p>{fmt(totals.occur)} {t.occur}</p></div></div><div className="stat-card"><div className="stat-icon green"><ShieldCheck size={19}/></div><div><span>{t.totalCheck}</span><strong>{totals.done<=totals.occur?t.pass:t.warn}</strong><p>{t.done}: {fmt(totals.done)} / {fmt(totals.occur)}</p></div><CheckCircle2 className="stat-check" size={23}/></div></section>
   <main className="workspace">
@@ -95,7 +127,7 @@ function App(){
       <div className="report-fields"><label>{t.date}<input type="date" value={r.date||todayISO()} onChange={e=>updateReport(r.id,{date:e.target.value})}/></label><label>{t.shiftLabel}<input value={r.shift||''} placeholder="A / B / C" onChange={e=>updateReport(r.id,{shift:e.target.value})}/></label><label>{t.source}<input value={r.source||''} placeholder="Team / note" onChange={e=>updateReport(r.id,{source:e.target.value})}/></label></div>
       <div className="mini-table-wrap"><table className="mini-table"><thead><tr><th>{t.issue}</th><th>{t.occur}</th><th>{t.done}</th></tr></thead><tbody>{activeCats.map(c=><tr key={c.id}><td>{c.name}</td><td><input type="number" min="0" value={r.values?.[c.id]?.occur??0} onChange={e=>updateValue(r.id,c.id,'occur',e.target.value)} /></td><td><input type="number" min="0" value={r.values?.[c.id]?.done??0} onChange={e=>updateValue(r.id,c.id,'done',e.target.value)} /></td></tr>)}</tbody></table></div>
       {r.rawText&&<details className="raw-text"><summary>{t.unmatched} / OCR text</summary><pre>{r.rawText}</pre></details>}
-      <div className="report-footer"><span className={`status ${r.status==='confirmed'?'ok':'pending'}`}>{r.status==='confirmed'?<Check size={13}/>:<AlertTriangle size={13}/>} {r.status==='confirmed'?t.doneLabel:t.pending}</span><div><button className="text-btn" onClick={async()=>{setBusy(v=>v+1);try{const file=await (await fetch(r.image)).blob();const res=await recognizeImage(new File([file],r.name,{type:file.type}),categories);updateReport(r.id,{values:res.values,rawText:res.rawText,confidence:res.confidence,status:'review'});}catch{setToast(t.error)}finally{setBusy(v=>Math.max(0,v-1));}}}><RotateCcw size={14}/>{t.reprocess}</button>{r.status!=='confirmed'&&<button className="primary-btn compact" onClick={()=>confirmReport(r)}><CheckCircle2 size={15}/>{t.confirm}</button>}</div></div>
+      <div className="report-footer"><span className={`status ${r.status==='confirmed'?'ok':'pending'}`}>{r.status==='confirmed'?<Check size={13}/>:<AlertTriangle size={13}/>} {r.status==='confirmed'?t.doneLabel:t.pending}</span><div><button className="text-btn" onClick={async()=>{setBusy(v=>v+1);try{const file=await (await fetch(r.image)).blob();const res=await recognizeImage(new File([file],r.name,{type:file.type}),categories);updateReport(r.id,{values:res.values,rawText:res.rawText,confidence:res.confidence,expectedTotal:res.expectedTotal,totalMatches:res.totalMatches,needsReview:res.needsReview,status:'review'});}catch{setToast(t.error)}finally{setBusy(v=>Math.max(0,v-1));}}}><RotateCcw size={14}/>{t.reprocess}</button>{r.status!=='confirmed'&&<button className="primary-btn compact" onClick={()=>confirmReport(r)}><CheckCircle2 size={15}/>{t.confirm}</button>}</div></div>
      </article>)}</div>
    </section>
    <section className="panel summary-panel" ref={rightRef}><div className="panel-heading summary-head"><div><div className="eyebrow">02 / RECONCILIATION</div><h2>{t.summary}</h2><p>{t.summarySub}</p></div><div className="month-picker"><span>{t.month}</span><input type="month" value={month} onChange={e=>setMonth(e.target.value)}/></div></div>
