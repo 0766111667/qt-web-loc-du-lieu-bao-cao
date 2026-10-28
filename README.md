@@ -1,48 +1,107 @@
-# QT Report Aggregator 2.1.0
+# Tổng hợp sự cố QT
 
-A rebuilt static web app with a desktop two-column / mobile one-column layout, Chinese/Vietnamese/English UI, client-side OCR, explicit reconciliation gates, image duplicate hashing, edit/review queue, local persistence, CSV (Excel-compatible) and PNG export, serialized batch OCR, trace-to-source highlighting, backlog warnings, aliases, and reset/undo controls.
+Web app đọc **ảnh bảng thống kê sự cố QT** (ảnh chụp bảng Excel), kiểm tra khớp, rồi **cộng dồn theo tháng**.
+Danh mục hạng mục là **động**: thêm, đổi tên, đổi thứ tự, gộp, ẩn, xóa ngay trong Cài đặt, không cần sửa code.
 
-## Run and build
-Requires Node.js 18+.
+Ảnh và dữ liệu nằm **trong trình duyệt của bạn** (IndexedDB). Chỉ khi bật AI dự phòng, những dải ảnh nhỏ của các dòng không chắc mới được gửi lên máy chủ của bạn trên Vercel.
+
+---
+
+## 1. Chạy thử trên máy (5 phút)
+
+1. Cài **Node.js 20 trở lên** (bản LTS) tại https://nodejs.org
+2. Giải nén thư mục này, mở Terminal (Windows: PowerShell) tại thư mục đó.
+3. Chạy:
 
 ```bash
+npm install
 npm run dev
-npm test
-npm run build
 ```
 
-`npm run build` performs a static production packaging check and writes `dist/`. This project intentionally uses no build-time third-party dependencies. OCR loads Tesseract.js and its Chinese/English language data from jsDelivr on first use, so first recognition requires network access. Mobile performance depends on the device and browser.
+4. Mở địa chỉ hiện ra (thường là http://localhost:5173), kéo thả vài ảnh vào mục **Nhập ảnh**.
 
-## Vercel
-Import the repository and use build command `npm run build`, output directory `dist`. This is a static deployment. Deployment has NOT been performed by this source package.
+Kiểm tra mã nguồn: `npm test` (17 bài kiểm thử, chạy trên 2 ảnh mẫu trong `test/fixtures`).
 
-## OCR accuracy and safeguards
-- Browser-side Tesseract.js; first attempt plus contrast-enhanced retry and bottom-region total pass.
-- Batch images are queued and processed sequentially through the shared OCR worker to avoid concurrent worker collisions.
-- Text parsing is conservative and only accepts a row if a row number or exact Chinese label can be associated with two numeric cells. OCR parsing of perspective photos is inherently imperfect.
-- The app requires all 16 rows to be parsed and validates non-negative integers plus processed <= occurrences. When printed totals are unreadable or conflict with row sums, the app records totals calculated from the 16 rows and visibly marks that the printed total was not independently read. Review row values before confirmation; this avoids blocking every image solely because the bottom total OCR failed, but does not independently verify a misread row.
-- Optional fallback endpoint can be configured in Settings. It receives the full image as base64. You must deploy and secure that endpoint yourself; no paid AI provider is configured by default and no fallback costs occur unless configured.
-- Identical image bytes are hashed with SHA-256; duplicates require an explicit override. A database unique constraint on image_hash is also provided.
+## 2. Đưa lên mạng bằng Vercel (miễn phí)
 
-## Persistence and cloud
-Local browser storage uses localStorage for the report records/config. It survives refreshes on the same browser profile, but is not cross-device and can be cleared by browser settings. For team sync, create a Supabase project, run `supabase/schema.sql`, then enter the project URL and public anon key in Settings. Never put a service-role key in the browser. The included RLS policy is per-user, not shared-team access. To enable shared team reporting, add a team membership model and policies before production use. Cloud sync currently writes confirmed reports; initial cross-device pull/auth UI and conflict-resolution are not implemented yet, so treat cloud integration as a starter adapter, not a finished multi-user system.
+**Cách A, qua GitHub (khuyên dùng)**
+1. Tạo kho GitHub mới, đẩy toàn bộ thư mục này lên (thay nội dung kho cũ nếu muốn).
+2. Vào https://vercel.com, đăng nhập bằng GitHub, chọn **Add New → Project**, chọn kho vừa tạo.
+3. Vercel tự nhận Vite. Giữ nguyên: Build Command `npm run build`, Output Directory `dist`. Bấm **Deploy**.
 
-## Exports
-The export button creates UTF-8 CSV that opens in Excel. It is not a native `.xlsx` workbook. PNG is rendered from the monthly summary.
+**Cách B, qua dòng lệnh**
+```bash
+npm install -g vercel
+vercel          # lần đầu: trả lời các câu hỏi, chọn mặc định
+vercel --prod   # đưa bản chính thức lên
+```
 
-## Test limits
-Build checks validate required source files and create `dist/`. They do not prove OCR accuracy on all images, browser compatibility, Supabase permissions, or successful Vercel deployment. Test with a known set of real reports before production use.
+## 3. Bật AI dự phòng (tùy chọn)
 
-## Important limitation
-This is a static browser app. It has not been deployed to GitHub/Vercel from this workspace. Browser OCR still requires network access to load Tesseract.js and Chinese language data on first run. The source package has passed syntax/build checks and automated structural tests, but must be verified in a real browser against the team’s image set before production use.
+Chỉ cần khi muốn AI đọc lại các dòng app không chắc. Không bật thì app vẫn chạy đủ chức năng, các dòng không chắc sẽ vào mục **Cần xem lại** để bạn sửa tay.
 
+1. Tạo khóa API tại https://console.anthropic.com (mục API Keys).
+2. Trong Vercel: **Project → Settings → Environment Variables**, thêm:
 
-## v2.1.2: Manual review and approval
+| Tên | Giá trị |
+|---|---|
+| `ANTHROPIC_API_KEY` | khóa vừa tạo (bắt buộc) |
+| `APP_ACCESS_KEY` | một chuỗi bí mật dài tự đặt, ví dụ 24 ký tự ngẫu nhiên (bắt buộc) |
+| `ANTHROPIC_MODEL` | tùy chọn, mặc định `claude-haiku-5-5`. **Hãy kiểm tra tên mô hình này có trong tài khoản của bạn**; nếu không, đặt tên mô hình khác. |
 
-- Keeps automatic confirmation restricted to rows that are complete and whose printed totals reconcile (or when all 16 rows are complete and printed totals are unread, per the existing validation policy).
-- Adds an explicit manual approval path for OCR failures or unread/mismatched printed totals. The user must inspect all 16 rows, correct uncertain values, mark the rows as reviewed, and confirm a warning dialog before the record enters monthly totals.
-- Manual approvals are stored with `manualApproved`, the calculated row totals, and an audit note.
-- The manual approval button remains disabled until all 16 rows have been marked reviewed and validated.
-- Existing reset controls, batch queue, duplicate protection, trace filtering, backlog warnings, aliases, exports, and settings are retained.
+3. **Redeploy** (Deployments → ⋯ → Redeploy) để biến môi trường có hiệu lực.
+4. Trong app: **Cài đặt → Đọc ảnh và AI** → bật “Nhờ AI đọc lại…”, địa chỉ để `/api/vision`, dán `APP_ACCESS_KEY` vào ô mã truy cập.
 
-Validation: `npm test` and `npm run build`. Real browser OCR still needs testing with the actual report images and target deployment.
+Ghi chú: `npm run dev` không chạy thư mục `api/`. Muốn thử AI trên máy, dùng `vercel dev` thay cho `npm run dev`.
+
+## 4. Cách dùng hằng ngày
+
+1. **Nhập ảnh**: chọn ngày báo cáo của lô, rồi kéo thả (hoặc Ctrl+V dán) nhiều ảnh. Có thanh tiến độ, tạm dừng/tiếp tục; đóng tab giữa chừng thì lần mở sau tự đọc tiếp.
+2. Ảnh **khớp kiểm tra** (tổng các dòng = dòng tổng trên ảnh, đã xử lý ≤ phát sinh, mọi hạng mục đã biết) được **tự duyệt**.
+3. Ảnh còn lại nằm ở **Cần xem lại**: ảnh gốc ở bên trái (phóng được, rê chuột vào dòng sẽ tô sáng dòng đó trên ảnh), bảng số ở bên phải. Sửa số hoặc chọn hạng mục, rồi bấm **Duyệt**.
+4. Gặp **hạng mục mới**: chọn “＋ Hạng mục mới…”, đặt tên một lần. Các ảnh sau tự nhận ra.
+5. **Tổng hợp tháng**: cộng dồn mọi báo cáo trong tháng. Bấm một dòng để xem các báo cáo đã góp vào. Tải CSV (mở bằng Excel) hoặc ảnh PNG.
+6. **Lịch sử**: mở lại báo cáo để sửa, hoặc xóa (có hoàn tác).
+7. **Cài đặt → Dữ liệu**: sao lưu/khôi phục bằng tệp JSON. Nên sao lưu định kỳ vì dữ liệu nằm trong trình duyệt.
+
+Mỗi ảnh được hiểu là số **phát sinh riêng của lần đó**, tổng tháng là **cộng dồn các ảnh**.
+
+## 5. Cách app đọc ảnh
+
+- **Dò bảng**: tìm hàng tiêu đề xanh, đường kẻ hàng/cột, tự co giãn theo kích thước ảnh. Không dùng tọa độ cố định.
+- **Đọc số**: tách từng chữ số rồi so khớp với mẫu (không dùng OCR cho số vì thử nghiệm cho thấy OCR đọc rất kém trên các ô số nhỏ). Mẫu khởi đầu nằm trong `src/core/seeds.json` và `src/core/calibration.json`, và **app học thêm từ mỗi báo cáo đã duyệt**.
+- **Đọc tên hạng mục**: nhận bằng “chữ ký” hình dạng của ô tên (không cần OCR). Tên lạ mới dùng OCR chữ Hán (tải khoảng 20 MB lần đầu, có thể tắt trong Cài đặt), rồi hỏi bạn một lần.
+- **Không đoán**: ô nào không chắc thì ảnh vào **Cần xem lại**; ô trống không bao giờ bị coi là 0.
+
+## 6. Cấu trúc thư mục
+
+```
+src/core/     logic thuần: dò bảng, đọc số, danh mục, kiểm tra khớp, tổng hợp (có test)
+src/ocr/      pipeline đọc ảnh, hàng đợi, cầu nối trình duyệt, OCR chữ Hán, client AI
+src/app/      kho dữ liệu IndexedDB, trạng thái và hành động, bảng thuật ngữ tiếng Việt
+src/ui/       giao diện Preact (4 tab + Cài đặt)
+api/vision.js hàm Vercel gọi AI (khóa API chỉ nằm ở server)
+test/         kiểm thử + 2 ảnh mẫu kèm đáp án (test/fixtures/expected.json)
+scripts/      tạo lại mẫu khởi đầu và dữ liệu hiệu chuẩn
+```
+
+Thêm ảnh mẫu mới để app đọc tốt hơn: chép ảnh vào `test/fixtures/`, điền đáp án vào `expected.json`, rồi chạy `npm run calibrate`.
+
+## 7. Giới hạn đã biết
+
+- Mẫu chữ số khởi đầu có sẵn các số **0, 1, 3, 4, 5, 6, 9** từ ảnh thật. Các số **2, 7, 8** mới chỉ có mẫu từ font nên độ chắc thấp hơn; ảnh có các số này nếu đọc sai sẽ vào “Cần xem lại”, và app học dần sau khi bạn duyệt.
+- Đã kiểm thử với bảng đúng mẫu (tiêu đề xanh, cột tên, hai cột số, dòng tổng). Bảng khác hẳn bố cục có thể phải chỉnh `src/core/grid.js`.
+- Ảnh chụp bằng điện thoại (nghiêng, lóa) chưa được hỗ trợ; ảnh chụp màn hình thì tốt.
+- OCR chữ Hán cần mạng ở lần đầu (tải dữ liệu ngôn ngữ). Không có mạng thì tên lạ sẽ để bạn tự chọn.
+- Chưa có đồng bộ giữa nhiều máy/người. Mỗi trình duyệt có dữ liệu riêng; dùng sao lưu/khôi phục để chuyển.
+
+## 8. Xử lý sự cố
+
+| Hiện tượng | Cách xử lý |
+|---|---|
+| Ảnh báo “Ảnh trùng” | Ảnh giống hệt đã nhập. Bấm “Vẫn nhập” nếu thật sự muốn nhập lại. |
+| Nhiều ảnh vào “Cần xem lại” | Duyệt vài ảnh đầu, app sẽ học và các ảnh sau thường tự khớp. |
+| Đọc sai số liên tục | Cài đặt → Dữ liệu → “Xóa mẫu đã học”. |
+| Mất dữ liệu sau khi xóa lịch sử duyệt web | Khôi phục từ tệp sao lưu JSON. |
+| Nút AI báo lỗi 401 | Mã truy cập trong Cài đặt khác `APP_ACCESS_KEY` trên Vercel. |
+| Nút AI báo lỗi 500 | Chưa đặt `ANTHROPIC_API_KEY`/`APP_ACCESS_KEY` hoặc chưa Redeploy. |
