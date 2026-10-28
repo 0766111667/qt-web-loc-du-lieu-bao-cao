@@ -16,7 +16,7 @@ function open() {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
     req.onblocked = () => reject(new Error('blocked'));
-  }).catch((e) => { db.persistent = false; console.warn('IndexedDB không khả dụng, dùng bộ nhớ tạm:', e); return null; });
+  }).catch((e) => { db.persistent = false; console.warn('IndexedDB 不可用，改用内存暂存：', e); return null; });
   return dbPromise;
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import * as db from './db.js';
-import { T, errorText } from './vi.js';
+import { T, errorText } from './text.js';
 import seeds from '../core/seeds.json';
 import calibration from '../core/calibration.json';
 import { createCatalog, addItem, addAlias, addSignature, addTotalSignature, matchBySignature, setLabel, renameSource, setHidden, removeItem, moveItem, mergeItems, itemById } from '../core/catalog.js';
@@ -71,7 +71,7 @@ async function processJob(id) {
   job.status = 'working'; notify();
   try {
     const rec = await db.get('blobs', id);
-    if (!rec?.blob) throw new Error('Không tìm thấy ảnh đã lưu');
+    if (!rec?.blob) throw new Error('找不到已保存的图片');
     const img = await decodeFile(rec.blob);
     const ctx = { catalog: state.catalog, templates: templates(), settings: valSettings(), ocrName: state.settings.ocrChinese ? ocrName : undefined };
     let result = await analyzeImage(img, ctx);
@@ -95,6 +95,8 @@ export async function init() {
   state.persistent = await db.init();
   const meta = await db.get('meta', 'app');
   state.catalog = meta?.catalog || createCatalog(calibration);
+  // Bản cũ đặt nhãn mặc định bằng tiếng Việt: chuyển về tên gốc (tiếng Trung) để giao diện thống nhất.
+  state.catalog = { ...state.catalog, items: state.catalog.items.map((it) => (/^d\d+$/.test(it.id) && /[\u00c0-\u1ef9]/.test(it.label) ? { ...it, label: it.name } : it)) };
   state.learned = meta?.learned || [];
   state.settings = { ...DEFAULTS, ...(meta?.settings || {}) };
   queue.setConcurrency(state.settings.concurrency);
@@ -110,7 +112,7 @@ export async function init() {
 // ---------- nhập ảnh ----------
 export async function addFiles(files, date = state.batchDate) {
   const list = [...files].filter((f) => f.type.startsWith('image/'));
-  if (!list.length) { toast('Không có ảnh nào hợp lệ trong lựa chọn.'); return; }
+  if (!list.length) { toast('所选内容中没有有效的图片。'); return; }
   const idle = !state.jobs.some((j) => j.status === 'queued' || j.status === 'working');
   if (idle) state.batch = { total: 0, finished: 0 };
   const seen = new Set(state.jobs.map((j) => j.hash).concat(state.reports.map((r) => r.hash)));
@@ -122,7 +124,7 @@ export async function addFiles(files, date = state.batchDate) {
     const id = uid();
     const thumb = await makeThumb(f).catch(() => null);
     await db.put('blobs', { id, blob: f, thumb });
-    const job = { id, name: f.name || 'anh-dan.png', size: f.size, hash, date, status: dup ? 'duplicate' : 'queued', createdAt: Date.now() };
+    const job = { id, name: f.name || 'pasted-image.png', size: f.size, hash, date, status: dup ? 'duplicate' : 'queued', createdAt: Date.now() };
     state.jobs.push(job);
     await saveJob(job);
     if (!dup) { state.batch.total++; fresh.push(id); }
@@ -198,7 +200,7 @@ export function createItemForRow(jobId, rowIx, { name, label }) {
   const { catalog, id } = addItem(state.catalog, { name: n, label: label?.trim() || n });
   state.catalog = catalog;
   assignItem(jobId, rowIx, id);
-  toast(`Đã thêm hạng mục “${label?.trim() || n}”. Các ảnh sau sẽ tự nhận ra.`);
+  toast(`已添加问题类型“${label?.trim() || n}”，之后的图片会自动识别。`);
 }
 
 async function rematchPending() {
@@ -221,7 +223,7 @@ export function jobReady(job) {
 
 export async function approveJob(id, { auto = false } = {}) {
   const job = getJob(id); if (!job?.result) return false;
-  if (!jobReady(job)) { toast('Còn dòng chưa có hạng mục hoặc thiếu số — hãy bổ sung trước khi duyệt.'); return false; }
+  if (!jobReady(job)) { toast('还有行未选择问题类型或缺少数字，请补全后再确认。'); return false; }
   const res = job.result;
   const rows = liveRows(job);
   const rep = {
@@ -242,7 +244,7 @@ export async function approveJob(id, { auto = false } = {}) {
   if (learned !== state.learned) { state.learned = learned; templatesCache = null; }
   persistMeta();
   job.status = 'done'; job.reportId = id; await saveJob(job);
-  if (!auto) { const next = state.jobs.find((j) => j.status === 'review'); state.selectedJob = next?.id ?? null; toast('Đã duyệt và cộng vào tổng tháng.'); }
+  if (!auto) { const next = state.jobs.find((j) => j.status === 'review'); state.selectedJob = next?.id ?? null; toast('已确认并计入月度汇总。'); }
   notify();
   return true;
 }
@@ -253,7 +255,7 @@ export async function deleteReport(id) {
   state.reports = state.reports.filter((r) => r.id !== id);
   await db.del('reports', id);
   const job = getJob(id); if (job) { job.status = 'removed'; await saveJob(job); }
-  toast('Đã xóa báo cáo khỏi tổng tháng.', { label: 'Hoàn tác', run: async () => {
+  toast('已从月度汇总中删除该报告。', { label: '撤销', run: async () => {
     state.reports = [rep, ...state.reports]; await db.put('reports', rep);
     if (job) { job.status = 'done'; await saveJob(job); }
     notify();
@@ -262,7 +264,7 @@ export async function deleteReport(id) {
 
 export async function reopenReport(id) {
   const job = getJob(id); const rep = state.reports.find((r) => r.id === id);
-  if (!job?.result || !rep) { toast('Không còn dữ liệu ảnh gốc để mở lại báo cáo này.'); return; }
+  if (!job?.result || !rep) { toast('原图数据已不存在，无法重新打开该报告。'); return; }
   state.reports = state.reports.filter((r) => r.id !== id);
   await db.del('reports', id);
   job.status = 'review'; await saveJob(job);
@@ -287,7 +289,7 @@ export const catalogOps = {
       rep.rows = [...by.values()]; await db.put('reports', rep);
     }
     for (const j of state.jobs) if (j.result) for (const r of j.result.rows) if (map[r.itemId]) r.itemId = map[r.itemId];
-    toast('Đã gộp hạng mục, lịch sử được cập nhật theo.'); notify();
+    toast('已合并问题类型，历史记录已同步更新。'); notify();
   },
   async remove(id) {
     state.catalog = removeItem(state.catalog, id); persistMeta();
@@ -312,16 +314,16 @@ export function buildBackup() {
 
 export async function restoreBackup(text) {
   const d = JSON.parse(text);
-  if (d.app !== 'qt-report-aggregator' || !Array.isArray(d.reports) || !d.catalog?.items) throw new Error('Tệp không phải bản sao lưu của ứng dụng này.');
+  if (d.app !== 'qt-report-aggregator' || !Array.isArray(d.reports) || !d.catalog?.items) throw new Error('该文件不是本应用的备份文件。');
   state.catalog = d.catalog; state.learned = d.learned || []; templatesCache = null;
   state.settings = { ...state.settings, ...(d.settings || {}) };
   await db.clear('reports');
   for (const r of d.reports) await db.put('reports', r);
   state.reports = d.reports.sort((a, b) => b.date.localeCompare(a.date));
-  persistMeta(); toast(`Đã khôi phục ${d.reports.length} báo cáo.`); notify();
+  persistMeta(); toast(`已恢复 ${d.reports.length} 份报告。`); notify();
 }
 
-export async function resetLearning() { state.learned = []; templatesCache = null; state.catalog = { ...state.catalog, items: state.catalog.items.map((i) => ({ ...i, sigs: [] })) }; persistMeta(); toast('Đã xóa mẫu đã học (giữ mẫu hiệu chuẩn có sẵn).'); }
+export async function resetLearning() { state.learned = []; templatesCache = null; state.catalog = { ...state.catalog, items: state.catalog.items.map((i) => ({ ...i, sigs: [] })) }; persistMeta(); toast('已清除学习到的样本（保留内置校准样本）。'); }
 
 export async function wipeAll() {
   for (const s of ['jobs', 'blobs', 'reports', 'meta']) await db.clear(s);

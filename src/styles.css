@@ -11,7 +11,7 @@
     --ok: #6fd1a0; --ok-bg: #173226; --warn: #f2b45a; --warn-bg: #3b2c12; --bad: #ff9c94; --bad-bg: #3d1b19; --info: #8dbbe8; --info-bg: #182a3d; --focus: #6aa8ff; color-scheme: dark; }
 }
 * { box-sizing: border-box; }
-html { font: 15px/1.5 "Segoe UI", "SF Pro Text", "Noto Sans", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
+html { font: 15px/1.6 "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Segoe UI", system-ui, sans-serif; }
 body { margin: 0; background: var(--paper); color: var(--ink); font-variant-numeric: tabular-nums; }
 button, input, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -101,11 +101,11 @@ main { max-width: 1180px; margin: 0 auto; padding: 1rem; }
 
 .tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; }
 table.grid { width: 100%; border-collapse: collapse; }
-.grid th { background: var(--head); color: var(--head-ink); text-align: left; padding: .45rem .6rem; font-weight: 600; position: sticky; top: 0; }
+.grid th { white-space: nowrap; background: var(--head); color: var(--head-ink); text-align: left; padding: .45rem .6rem; font-weight: 600; position: sticky; top: 0; }
 .grid td { padding: .25rem .6rem; border-top: 1px solid var(--rule); vertical-align: middle; }
 .grid th:nth-child(n+3), .grid td.c-occ, .grid td.c-pct { text-align: right; }
 .grid td.c-occ, .grid td.c-pct, .summary td:nth-child(n+3) { background: var(--sheet); }
-.c-no { color: var(--ink-2); width: 2.5rem; }
+.c-no { color: var(--ink-2); width: 3.5rem; white-space: nowrap; }
 .grid tr.active td { box-shadow: inset 0 0 0 9999px rgba(255, 196, 0, .16); }
 .grid tr.skipped { opacity: .5; }
 .grid tr.zero td { color: var(--ink-2); }

@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Đọc ảnh bảng thống kê sự cố QT, kiểm tra khớp, cộng dồn theo tháng. Danh mục hạng mục động.",
+  "description": "识别 QT 软件问题统计表截图，校验一致后按月累计。问题类型可动态增删。",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

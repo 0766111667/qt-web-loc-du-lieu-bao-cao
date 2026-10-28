@@ -1,4 +1,4 @@
-// Lớp AI vision dự phòng: chỉ gửi các HÀNG không chắc (dải ảnh nhỏ), không gửi cả ảnh. Kết quả luôn được kiểm tra lại bằng tổng.
+// AI（Gemini）备用识别：只发送不确定的“行”（很小的图片片段），不发送整张图。结果始终会用总计再次校验。
 import { rowStripRect } from '../core/cells.js';
 import { cropToDataURL } from './canvas.js';
 import { matchByName } from '../core/catalog.js';
@@ -16,7 +16,7 @@ export async function refineWithVision({ img, result, catalog, settings, limit }
   const body = { rows: picks.map((r) => ({ id: String(r.rowIx), image: cropToDataURL(img, rowStripRect(result.table, r.rowIx), 3) })) };
   const data = await limit(async () => {
     const res = await fetch(settings.aiEndpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'x-access-key': settings.aiKey || '' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(`AI trả về lỗi ${res.status}`);
+    if (!res.ok) throw new Error(`AI 服务返回错误（${res.status}）`);
     return res.json();
   });
 

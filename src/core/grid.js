@@ -38,7 +38,7 @@ function findHeader(img) {
     rowFrac[y] = n / w;
   }
   const runs = runsOf(Array.from(rowFrac, (v) => v > 0.5), 6);
-  if (!runs.length) throw new GridError('NO_HEADER', 'Không thấy hàng tiêu đề xanh của bảng.');
+  if (!runs.length) throw new GridError('NO_HEADER', '未找到表格的蓝色表头。');
   const [y0, y1] = runs.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
   const bandH = y1 - y0 + 1;
   const xs = []; for (let x = 0; x < w; x++) xs.push(colHit[x] > bandH * 0.4);
@@ -83,7 +83,7 @@ function findColumnEdges(img, hdr, yTop, yBot) {
 export function detectTable(img) {
   const hdr = findHeader(img);
   const seps = findRowSeparators(img, hdr);
-  if (seps.length < 3) throw new GridError('NO_ROWS', 'Không dò được các đường kẻ hàng.');
+  if (seps.length < 3) throw new GridError('NO_ROWS', '无法识别表格的行线。');
 
   // Chiều cao hàng chuẩn = trung vị khoảng cách giữa các đường kẻ.
   const gaps = seps.slice(1).map((v, i) => v - seps[i]);
@@ -100,19 +100,19 @@ export function detectTable(img) {
   if (img.height - bounds[bounds.length - 1] >= rowH * 0.6) bounds.push(img.height);
   const rows = [];
   for (let i = 0; i + 1 < bounds.length; i++) rows.push({ y0: bounds[i], y1: bounds[i + 1] - 1 });
-  if (!rows.length) throw new GridError('NO_ROWS', 'Không tách được hàng dữ liệu.');
+  if (!rows.length) throw new GridError('NO_ROWS', '无法分出数据行。');
 
   const edges = findColumnEdges(img, hdr, rows[0].y0 + 1, rows[rows.length - 1].y1 - 1);
   const xs = [hdr.x0, ...edges.filter((x) => x - hdr.x0 > 12 && hdr.x1 - x > 12), hdr.x1 + 1];
   const cols = [];
   for (let i = 0; i + 1 < xs.length; i++) if (xs[i + 1] - xs[i] > 12) cols.push([xs[i], xs[i + 1] - 1]);
-  if (cols.length < 3) throw new GridError('NO_COLUMNS', 'Không dò được đủ cột (cần tên + 2 cột số).');
+  if (cols.length < 3) throw new GridError('NO_COLUMNS', '无法识别足够的列（需要名称列和两列数字）。');
 
   // Gán vai trò: cột rộng nhất là tên; trước nó là số thứ tự; sau nó là phát sinh, đã xử lý, tỷ lệ.
   let nameIx = 0;
   cols.forEach((c, i) => { if (c[1] - c[0] > cols[nameIx][1] - cols[nameIx][0]) nameIx = i; });
   const after = cols.slice(nameIx + 1);
-  if (after.length < 2) throw new GridError('NO_COLUMNS', 'Thiếu cột số sau cột tên.');
+  if (after.length < 2) throw new GridError('NO_COLUMNS', '名称列之后缺少数字列。');
   const roles = { name: cols[nameIx], occ: after[0], proc: after[1] };
   if (nameIx > 0) roles.seq = cols[0];
   if (after[2]) roles.pct = after[2];

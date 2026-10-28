@@ -17,7 +17,7 @@ export function useBlobUrl(id, kind = 'blob') {
 
 export const Chip = ({ kind = 'neutral', children }) => <span class={`chip chip-${kind}`}>{children}</span>;
 
-// Nút hai bước thay cho window.confirm: bấm lần 1 đổi nhãn, bấm lần 2 mới thực hiện.
+// 两步确认按钮（代替 window.confirm）：第一次点击改变文字，第二次点击才执行。
 export function ConfirmButton({ label, confirmLabel, onConfirm, class: cls = '' }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => { if (!armed) return undefined; const t = setTimeout(() => setArmed(false), 5000); return () => clearTimeout(t); }, [armed]);
@@ -32,5 +32,5 @@ export function download(name, blobOrText, type = 'text/plain') {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-export const fmtDate = (iso) => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; };
-export const fmtMonth = (ym) => { const [y, m] = ym.split('-'); return `tháng ${m}/${y}`; };
+export const fmtDate = (iso) => iso.replaceAll('-', '/');
+export const fmtMonth = (ym) => { const [y, m] = ym.split('-'); return `${y}年${Number(m)}月`; };

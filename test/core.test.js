@@ -117,7 +117,7 @@ test('danh mục động: thêm, gộp, ẩn, xóa, đổi thứ tự, so khớp
   assert.equal(matchByName(cat, ' 证书问题 ').id, 'd3');
   assert.equal(matchByName(cat, '证书向题').id, 'd3'); // OCR sai 1 ký tự
   assert.equal(matchByName(cat, '完全不同的名称xyz'), null);
-  const added = addItem(cat, { name: '新问题', label: 'Vấn đề mới' });
+  const added = addItem(cat, { name: '新问题', label: '新问题（显示名）' });
   cat = added.catalog;
   assert.equal(cat.items.length, 17);
   assert.equal(matchByName(cat, '新问题').id, added.id);
@@ -143,7 +143,7 @@ test('tổng hợp tháng: cộng dồn phát sinh/đã xử lý theo hạng m�
   assert.equal(Math.round(agg.rows[0].pct), 83);
   cat = setHidden(cat, 'd2', true);
   assert.equal(aggregate(reports, cat, '2026-10').totals.occ, 5);
-  assert.match(buildCsv(agg, ['STT', 'Hạng mục', 'Phát sinh', 'Đã xử lý', 'Tồn', '%']), /^\ufeffSTT,Hạng mục/);
+  assert.match(buildCsv(agg, ['序号', '问题类型', '发生次数', '已处理', '未处理', '占比例(%)']), /^\ufeff序号,问题类型,发生次数/);
 });
 
 test('ngày theo giờ địa phương, không lệch UTC', () => {

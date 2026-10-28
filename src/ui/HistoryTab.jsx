@@ -10,21 +10,21 @@ export function HistoryTab() {
   return (
     <section>
       <div class="toolbar">
-        <p class="lead">{fmtMonth(s.month)}: {list.length} báo cáo</p>
-        <input type="search" placeholder="Tìm theo tên ảnh…" value={q} onInput={(e) => setQ(e.target.value)} aria-label="Tìm báo cáo" />
+        <p class="lead">{fmtMonth(s.month)}：{list.length} 份报告</p>
+        <input type="search" placeholder="按图片名称搜索…" value={q} onInput={(e) => setQ(e.target.value)} aria-label="搜索报告" />
       </div>
-      {!list.length && <p class="empty">Không có báo cáo nào.</p>}
+      {!list.length && <p class="empty">没有报告。</p>}
       <ul class="jobs">
         {list.map((r) => (
           <li class="job" key={r.id}>
             <div class="job-main">
               <div class="job-name" title={r.name}>{r.name}</div>
-              <div class="job-meta">Ngày {fmtDate(r.date)} · phát sinh {sum(r, 'occ')}, đã xử lý {sum(r, 'proc')}</div>
+              <div class="job-meta">日期 {fmtDate(r.date)} · 发生 {sum(r, 'occ')}，已处理 {sum(r, 'proc')}</div>
             </div>
-            <Chip kind={r.status === 'auto' ? 'ok' : 'info'}>{r.status === 'auto' ? 'Tự động duyệt' : 'Duyệt tay'}</Chip>
+            <Chip kind={r.status === 'auto' ? 'ok' : 'info'}>{r.status === 'auto' ? '自动确认' : '人工确认'}</Chip>
             <div class="job-actions">
-              <button onClick={() => reopenReport(r.id)} title="Đưa báo cáo về mục Cần xem lại để sửa số">Mở lại để sửa</button>
-              <ConfirmButton class="quiet" label="Xóa" confirmLabel="Bấm lại để xóa" onConfirm={() => deleteReport(r.id)} />
+              <button onClick={() => reopenReport(r.id)} title="把报告放回“待复核”以修改数字">重新打开修改</button>
+              <ConfirmButton class="quiet" label="删除" confirmLabel="再点一次删除" onConfirm={() => deleteReport(r.id)} />
             </div>
           </li>
         ))}

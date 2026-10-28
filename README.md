@@ -1,7 +1,7 @@
-# Tổng hợp sự cố QT
+# 汇总 QT 软件问题统计（Tổng hợp sự cố QT）
 
 Web app đọc **ảnh bảng thống kê sự cố QT** (ảnh chụp bảng Excel), kiểm tra khớp, rồi **cộng dồn theo tháng**.
-Danh mục hạng mục là **động**: thêm, đổi tên, đổi thứ tự, gộp, ẩn, xóa ngay trong Cài đặt, không cần sửa code.
+**Giao diện web hiển thị hoàn toàn bằng tiếng Trung giản thể** (thuật ngữ khớp với bảng nguồn: 问题类型, 发生次数, 已处理, 占比例, 总计). Danh mục hạng mục là **động**: thêm, đổi tên, đổi thứ tự, gộp, ẩn, xóa ngay trong Cài đặt, không cần sửa code.
 
 Ảnh và dữ liệu nằm **trong trình duyệt của bạn** (IndexedDB). Chỉ khi bật AI dự phòng, những dải ảnh nhỏ của các dòng không chắc mới được gửi lên máy chủ của bạn trên Vercel.
 
@@ -20,7 +20,7 @@ npm run dev
 
 4. Mở địa chỉ hiện ra (thường là http://localhost:5173), kéo thả vài ảnh vào mục **Nhập ảnh**.
 
-Kiểm tra mã nguồn: `npm test` (17 bài kiểm thử, chạy trên 2 ảnh mẫu trong `test/fixtures`).
+Kiểm tra mã nguồn: `npm test` (18 bài kiểm thử, chạy trên 2 ảnh mẫu trong `test/fixtures`).
 
 ## 2. Đưa lên mạng bằng Vercel (miễn phí)
 
@@ -36,29 +36,34 @@ vercel          # lần đầu: trả lời các câu hỏi, chọn mặc địn
 vercel --prod   # đưa bản chính thức lên
 ```
 
-## 3. Bật AI dự phòng (tùy chọn)
+## 3. Bật AI dự phòng bằng Google Gemini (tùy chọn)
 
-Chỉ cần khi muốn AI đọc lại các dòng app không chắc. Không bật thì app vẫn chạy đủ chức năng, các dòng không chắc sẽ vào mục **Cần xem lại** để bạn sửa tay.
+Chỉ cần khi muốn AI đọc lại các dòng app không chắc. Không bật thì app vẫn chạy đủ chức năng, các dòng không chắc sẽ vào mục **待复核** để bạn sửa tay.
 
-1. Tạo khóa API tại https://console.anthropic.com (mục API Keys).
+1. Tạo khóa API tại https://aistudio.google.com/apikey
 2. Trong Vercel: **Project → Settings → Environment Variables**, thêm:
 
 | Tên | Giá trị |
 |---|---|
-| `ANTHROPIC_API_KEY` | khóa vừa tạo (bắt buộc) |
+| `GEMINI_API_KEY` | khóa vừa tạo (bắt buộc) |
 | `APP_ACCESS_KEY` | một chuỗi bí mật dài tự đặt, ví dụ 24 ký tự ngẫu nhiên (bắt buộc) |
-| `ANTHROPIC_MODEL` | tùy chọn, mặc định `claude-haiku-5-5`. **Hãy kiểm tra tên mô hình này có trong tài khoản của bạn**; nếu không, đặt tên mô hình khác. |
+| `GEMINI_MODEL` | tùy chọn. Mặc định `gemini-4-argon` (bản mới nhất, ổn định, ra mắt 30/09/2026). Muốn rẻ và nhanh hơn: `gemini-3.8-flash`. |
+| `GEMINI_THINKING_LEVEL` | tùy chọn: `low` (mặc định), `medium`, `high` hoặc `none` |
 
 3. **Redeploy** (Deployments → ⋯ → Redeploy) để biến môi trường có hiệu lực.
-4. Trong app: **Cài đặt → Đọc ảnh và AI** → bật “Nhờ AI đọc lại…”, địa chỉ để `/api/vision`, dán `APP_ACCESS_KEY` vào ô mã truy cập.
+4. Trong app: **设置 → 识别与 AI** → bật “让 Gemini AI 重新识别不确定的行”, địa chỉ để `/api/vision`, dán `APP_ACCESS_KEY` vào ô mật khẩu.
 
-Ghi chú: `npm run dev` không chạy thư mục `api/`. Muốn thử AI trên máy, dùng `vercel dev` thay cho `npm run dev`.
+Ghi chú:
+- `npm run dev` không chạy thư mục `api/`. Muốn thử AI trên máy, dùng `vercel dev`.
+- Gemini 4 Argon đang có giá giới thiệu 2 USD / 10 USD cho mỗi 1 triệu token (đầu vào / đầu ra) đến hết 30/11/2026, sau đó 4 / 20 USD. App chỉ gửi những dải ảnh rất nhỏ của các dòng không chắc nên chi phí rất thấp. Hãy tự kiểm tra bảng giá hiện hành tại ai.google.dev/gemini-api/docs/pricing.
+- Với Gemini API miễn phí, Google có thể dùng dữ liệu gửi lên để cải thiện sản phẩm. Nếu dữ liệu nhạy cảm, hãy dùng dự án đã bật thanh toán và đọc điều khoản dữ liệu của gói bạn dùng.
+- Khóa API chỉ nằm ở máy chủ Vercel, và được gửi trong header `x-goog-api-key` (không nằm trong URL).
 
 ## 4. Cách dùng hằng ngày
 
-1. **Nhập ảnh**: chọn ngày báo cáo của lô, rồi kéo thả (hoặc Ctrl+V dán) nhiều ảnh. Có thanh tiến độ, tạm dừng/tiếp tục; đóng tab giữa chừng thì lần mở sau tự đọc tiếp.
+1. **导入图片 (Nhập ảnh)**: chọn ngày báo cáo của lô, rồi kéo thả (hoặc Ctrl+V dán) nhiều ảnh. Có thanh tiến độ, tạm dừng/tiếp tục; đóng tab giữa chừng thì lần mở sau tự đọc tiếp.
 2. Ảnh **khớp kiểm tra** (tổng các dòng = dòng tổng trên ảnh, đã xử lý ≤ phát sinh, mọi hạng mục đã biết) được **tự duyệt**.
-3. Ảnh còn lại nằm ở **Cần xem lại**: ảnh gốc ở bên trái (phóng được, rê chuột vào dòng sẽ tô sáng dòng đó trên ảnh), bảng số ở bên phải. Sửa số hoặc chọn hạng mục, rồi bấm **Duyệt**.
+3. Ảnh còn lại nằm ở **待复核 (Cần xem lại)**: ảnh gốc ở bên trái (phóng được, rê chuột vào dòng sẽ tô sáng dòng đó trên ảnh), bảng số ở bên phải. Sửa số hoặc chọn hạng mục, rồi bấm **Duyệt**.
 4. Gặp **hạng mục mới**: chọn “＋ Hạng mục mới…”, đặt tên một lần. Các ảnh sau tự nhận ra.
 5. **Tổng hợp tháng**: cộng dồn mọi báo cáo trong tháng. Bấm một dòng để xem các báo cáo đã góp vào. Tải CSV (mở bằng Excel) hoặc ảnh PNG.
 6. **Lịch sử**: mở lại báo cáo để sửa, hoặc xóa (có hoàn tác).
@@ -78,9 +83,9 @@ Mỗi ảnh được hiểu là số **phát sinh riêng của lần đó**, t�
 ```
 src/core/     logic thuần: dò bảng, đọc số, danh mục, kiểm tra khớp, tổng hợp (có test)
 src/ocr/      pipeline đọc ảnh, hàng đợi, cầu nối trình duyệt, OCR chữ Hán, client AI
-src/app/      kho dữ liệu IndexedDB, trạng thái và hành động, bảng thuật ngữ tiếng Việt
+src/app/      kho dữ liệu IndexedDB, trạng thái và hành động, text.js (toàn bộ chữ giao diện tiếng Trung)
 src/ui/       giao diện Preact (4 tab + Cài đặt)
-api/vision.js hàm Vercel gọi AI (khóa API chỉ nằm ở server)
+api/vision.js hàm Vercel gọi Gemini (khóa API chỉ nằm ở server)
 test/         kiểm thử + 2 ảnh mẫu kèm đáp án (test/fixtures/expected.json)
 scripts/      tạo lại mẫu khởi đầu và dữ liệu hiệu chuẩn
 ```
@@ -103,5 +108,6 @@ Thêm ảnh mẫu mới để app đọc tốt hơn: chép ảnh vào `test/fixt
 | Nhiều ảnh vào “Cần xem lại” | Duyệt vài ảnh đầu, app sẽ học và các ảnh sau thường tự khớp. |
 | Đọc sai số liên tục | Cài đặt → Dữ liệu → “Xóa mẫu đã học”. |
 | Mất dữ liệu sau khi xóa lịch sử duyệt web | Khôi phục từ tệp sao lưu JSON. |
-| Nút AI báo lỗi 401 | Mã truy cập trong Cài đặt khác `APP_ACCESS_KEY` trên Vercel. |
-| Nút AI báo lỗi 500 | Chưa đặt `ANTHROPIC_API_KEY`/`APP_ACCESS_KEY` hoặc chưa Redeploy. |
+| Nút AI báo lỗi 401 | Mật khẩu trong 设置 khác `APP_ACCESS_KEY` trên Vercel. |
+| Nút AI báo lỗi 500 | Chưa đặt `GEMINI_API_KEY`/`APP_ACCESS_KEY` hoặc chưa Redeploy. |
+| AI báo lỗi 502 | Khóa Gemini sai/hết hạn mức, hoặc tên `GEMINI_MODEL` không có trong tài khoản. |

@@ -4,22 +4,9 @@ import { normName, similarity } from './normalize.js';
 import { sigDistance } from './cells.js';
 
 export const DEFAULT_ITEMS = [
-  ['节点超时/线路异常', 'Node quá thời gian / lỗi đường truyền'],
-  ['注册来源为空', 'Nguồn đăng ký bị trống'],
-  ['证书问题', 'Lỗi chứng chỉ'],
-  ['讯息发送/接受异常', 'Lỗi gửi/nhận tin nhắn'],
-  ['网域被墙/拦截', 'Tên miền bị chặn'],
-  ['下载链接/浏览器异常', 'Lỗi link tải / trình duyệt'],
-  ['场地IP被拉黑', 'IP địa điểm bị chặn'],
-  ['无法注册', 'Không đăng ký được'],
-  ['安装问题', 'Lỗi cài đặt'],
-  ['网页版问题', 'Lỗi phiên bản web'],
-  ['密保问题', 'Lỗi câu hỏi bảo mật'],
-  ['设备限制', 'Hạn chế thiết bị'],
-  ['三方线路异常', 'Lỗi đường truyền bên thứ ba'],
-  ['无法登录', 'Không đăng nhập được'],
-  ['登录验证问题', 'Lỗi xác thực đăng nhập'],
-  ['QT功能问题', 'Lỗi chức năng QT'],
+  '节点超时/线路异常', '注册来源为空', '证书问题', '讯息发送/接受异常', '网域被墙/拦截', '下载链接/浏览器异常',
+  '场地IP被拉黑', '无法注册', '安装问题', '网页版问题', '密保问题', '设备限制', '三方线路异常', '无法登录',
+  '登录验证问题', 'QT功能问题',
 ];
 
 const NAME_SIG_THRESHOLD = 0.3;    // 1 - tương quan tối đa để coi là cùng tên
@@ -31,8 +18,8 @@ let counter = 0;
 export const newId = () => `c${Date.now().toString(36)}${(counter++).toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
 export function createCatalog(calibration = null) {
-  const items = DEFAULT_ITEMS.map(([name, label], i) => ({
-    id: `d${i + 1}`, name, label, aliases: [normName(name)], sigs: [], hidden: false,
+  const items = DEFAULT_ITEMS.map((name, i) => ({
+    id: `d${i + 1}`, name, label: name, aliases: [normName(name)], sigs: [], hidden: false,
   }));
   if (calibration) for (const n of calibration.names) if (items[n.i]) items[n.i].sigs.push(n.sig);
   return { version: 1, items, totalSigs: calibration ? [...calibration.totals] : [], totalAliases: ['总计', '合计', '总数', '总和', 'total'] };

@@ -24,7 +24,7 @@ export function ocrName(gray) {
       return (data.text || '').trim();
     } catch (e) {
       failed = true; // offline / không tải được dữ liệu: không thử lại liên tục trong phiên này
-      console.warn('OCR chữ Hán không khả dụng:', e);
+      console.warn('汉字 OCR 不可用：', e);
       return '';
     }
   };
