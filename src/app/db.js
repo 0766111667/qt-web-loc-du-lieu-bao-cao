@@ -11,11 +11,12 @@ function open() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') return reject(new Error('no indexedDB'));
+    const timer = setTimeout(() => reject(new Error('mở IndexedDB quá lâu')), 6000);
     const req = indexedDB.open(NAME, VERSION);
     req.onupgradeneeded = () => { for (const s of STORES) req.result.createObjectStore(s, { keyPath: keyPaths[s] }); };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-    req.onblocked = () => reject(new Error('blocked'));
+    req.onsuccess = () => { clearTimeout(timer); req.result.onversionchange = () => req.result.close(); resolve(req.result); };
+    req.onerror = () => { clearTimeout(timer); reject(req.error); };
+    req.onblocked = () => { clearTimeout(timer); reject(new Error('blocked')); };
   }).catch((e) => { db.persistent = false; console.warn('IndexedDB 不可用，改用内存暂存：', e); return null; });
   return dbPromise;
 }
@@ -32,6 +33,17 @@ async function run(store, mode, fn) {
 }
 
 export async function init() { await open(); return db.persistent; }
+
+// Xóa toàn bộ cơ sở dữ liệu cục bộ (dùng khi dữ liệu bị lỗi). Cần đóng các tab khác đang mở ứng dụng.
+export function deleteDatabase() {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') return resolve(true);
+    const r = indexedDB.deleteDatabase(NAME);
+    r.onsuccess = () => resolve(true);
+    r.onerror = () => resolve(false);
+    r.onblocked = () => resolve(false);
+  });
+}
 export const get = async (s, k) => (db.persistent ? run(s, 'readonly', (st) => st.get(k)) : mem[s].get(k));
 export const all = async (s) => (db.persistent ? run(s, 'readonly', (st) => st.getAll()) : [...mem[s].values()]);
 export const put = async (s, v) => { if (!db.persistent) { mem[s].set(v[keyPaths[s]], v); return; } await run(s, 'readwrite', (st) => st.put(v)); };

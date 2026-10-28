@@ -5,12 +5,13 @@ import { ReviewTab } from './ReviewTab.jsx';
 import { SummaryTab } from './SummaryTab.jsx';
 import { HistoryTab } from './HistoryTab.jsx';
 import { SettingsModal } from './SettingsModal.jsx';
+import { Boot, resetLocalData } from './Boot.jsx';
 
 const VIEWS = { import: ImportTab, review: ReviewTab, summary: SummaryTab, history: HistoryTab };
 
 export function App() {
   const s = useStore();
-  if (!s.ready) return <div class="boot">正在打开数据…</div>;
+  if (!s.ready) return <Boot />;
   const View = VIEWS[s.tab];
   const reviewCount = s.jobs.filter((j) => j.status === 'review').length;
   const busy = s.jobs.filter((j) => j.status === 'queued' || j.status === 'working').length;
@@ -32,7 +33,8 @@ export function App() {
           </button>
         ))}
       </nav>
-      {!s.persistent && <div class="warn-box wide">浏览器不允许本地保存数据——关闭标签页后数据会丢失。请在 设置 → 数据 中备份。</div>}
+      {s.initError && <div class="warn-box wide">读取本地数据时出错（{s.initError}）。当前显示的是空白状态。<button class="danger" onClick={resetLocalData}>清除本地数据并重试</button></div>}
+      {!s.persistent && !s.initError && <div class="warn-box wide">浏览器不允许本地保存数据——关闭标签页后数据会丢失。请在 设置 → 数据 中备份。</div>}
       <main><View /></main>
       {s.toast && <div class="toast" role="status"><span>{s.toast.text}</span>{s.toast.action && <button onClick={() => { s.toast.action.run(); s.toast = null; }}>{s.toast.action.label}</button>}</div>}
       {s.settingsOpen && <SettingsModal />}

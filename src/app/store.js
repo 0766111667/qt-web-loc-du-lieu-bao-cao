@@ -18,21 +18,31 @@ export const DEFAULTS = {
 };
 
 export const state = {
-  ready: false, persistent: true, tab: 'import', month: monthOf(localDate()), batchDate: localDate(),
+  ready: false, initError: null, persistent: true, tab: 'import', month: monthOf(localDate()), batchDate: localDate(),
   catalog: null, learned: [], settings: { ...DEFAULTS }, jobs: [], reports: [],
   paused: false, batch: { total: 0, finished: 0 }, selectedJob: null, toast: null, settingsOpen: false,
 };
 
 // ---------- phát sự kiện cập nhật giao diện (gộp theo khung hình để 100 ảnh không làm giật) ----------
 const listeners = new Set();
-let frame = 0;
+let pending = false;
 export function notify() {
-  if (frame) return;
-  frame = requestAnimationFrame(() => { frame = 0; listeners.forEach((l) => l()); });
+  if (pending) return;
+  pending = true;
+  const run = () => { if (!pending) return; pending = false; listeners.forEach((l) => l()); };
+  requestAnimationFrame(run);
+  setTimeout(run, 120); // tab chạy nền bị tạm dừng requestAnimationFrame: vẫn cập nhật bằng bộ đếm giờ
 }
 export function useStore() {
   const [, force] = useState(0);
-  useEffect(() => { const l = () => force((n) => n + 1); listeners.add(l); return () => listeners.delete(l); }, []);
+  useEffect(() => {
+    const l = () => force((n) => n + 1);
+    listeners.add(l);
+    // Component đăng ký SAU khi init() có thể đã xong (Preact chạy effect sau khi vẽ): vẽ lại một lần để bắt kịp,
+    // nếu không giao diện sẽ kẹt mãi ở màn hình "正在打开数据…".
+    l();
+    return () => listeners.delete(l);
+  }, []);
   return state;
 }
 
@@ -92,6 +102,18 @@ async function processJob(id) {
 
 // ---------- khởi tạo ----------
 export async function init() {
+  try { await initInner(); }
+  catch (e) {
+    // Không để người dùng kẹt ở màn hình chờ: dùng dữ liệu mặc định và hiện nút xóa dữ liệu cục bộ.
+    console.error('Khởi tạo thất bại:', e);
+    state.initError = String(e?.message || e);
+    state.catalog ||= createCatalog(calibration);
+    state.persistent = false;
+    state.ready = true; notify();
+  }
+}
+
+async function initInner() {
   state.persistent = await db.init();
   const meta = await db.get('meta', 'app');
   state.catalog = meta?.catalog || createCatalog(calibration);
