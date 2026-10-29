@@ -1,6 +1,7 @@
 import { buildCsv } from '../core/csv.js';
 import { T } from '../app/text.js';
 import { download, fmtMonth } from './bits.jsx';
+import { buildReportXlsx, XLSX_MIME } from '../core/xlsx.js';
 
 export function exportCsv(agg) {
   const head = [T.col.no, T.col.item, T.col.occ, T.col.proc, T.col.backlog, '占比例(%)'];
@@ -45,4 +46,10 @@ export function exportPng(agg) {
   });
   x.strokeStyle = '#C9D0D8'; x.strokeRect(24.5, top + 0.5, W - 49, rowH * rowsOut.length);
   c.toBlob((b) => download(`qt-summary-${agg.month}.png`, b), 'image/png');
+}
+
+// Excel：汇总 + 上月对比 + 柱状图 + 按日明细 + 异常提醒（纯前端生成，不上传任何数据）。
+export async function exportXlsx(agg, cmp, daily, anomalies) {
+  const bytes = buildReportXlsx({ agg, cmp, daily, anomalies, monthLabel: fmtMonth(agg.month), prevLabel: `${Number(cmp.prevMonth.split('-')[1])}月` });
+  download(`qt-report-${agg.month}.xlsx`, new Blob([bytes], { type: XLSX_MIME }), XLSX_MIME);
 }

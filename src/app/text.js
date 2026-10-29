@@ -14,6 +14,7 @@ export const T = {
     unreadable_total: () => '无法识别总计行的数字',
     sum_mismatch: (_r, i) => `各行合计（${i.sums.occ}/${i.sums.proc}）与图片总计（${i.total.occ}/${i.total.proc}）不一致`,
     duplicate_item: () => '有问题类型重复出现',
+    suggested: (r) => `第${r + 1}行：数字由“总计”推算而来，请对照原图确认`,
   },
 };
 

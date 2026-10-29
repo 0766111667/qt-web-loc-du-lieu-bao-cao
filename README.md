@@ -3,7 +3,7 @@
 Web app đọc **ảnh bảng thống kê sự cố QT** (ảnh chụp bảng Excel), kiểm tra khớp, rồi **cộng dồn theo tháng**.
 **Giao diện web hiển thị hoàn toàn bằng tiếng Trung giản thể** (thuật ngữ khớp với bảng nguồn: 问题类型, 发生次数, 已处理, 占比例, 总计). Danh mục hạng mục là **động**: thêm, đổi tên, đổi thứ tự, gộp, ẩn, xóa ngay trong Cài đặt, không cần sửa code.
 
-Ảnh và dữ liệu nằm **trong trình duyệt của bạn** (IndexedDB). Chỉ khi bật AI dự phòng, những dải ảnh nhỏ của các dòng không chắc mới được gửi lên máy chủ của bạn trên Vercel.
+Ảnh gốc nằm **trong trình duyệt của bạn** (IndexedDB) và không bao giờ được tải lên. Số liệu đã xác nhận được đồng bộ qua Supabase của bạn (nếu cấu hình). Khi AI bật, chỉ những dải ảnh nhỏ của các dòng không chắc được gửi qua máy chủ Vercel của bạn tới Gemini.
 
 ---
 
@@ -36,22 +36,45 @@ vercel          # lần đầu: trả lời các câu hỏi, chọn mặc địn
 vercel --prod   # đưa bản chính thức lên
 ```
 
-## 3. Bật AI dự phòng bằng Google Gemini (tùy chọn)
+## 3. Cài đặt Supabase (đăng nhập một lần + đồng bộ) và Gemini (AI) — làm theo thứ tự
 
-Chỉ cần khi muốn AI đọc lại các dòng app không chắc. Không bật thì app vẫn chạy đủ chức năng, các dòng không chắc sẽ vào mục **待复核** để bạn sửa tay.
+Sau khi xong, **không còn mật khẩu nào phải nhập**: mỗi thiết bị đăng nhập bằng email đúng một lần rồi tự giữ phiên nhiều tháng. Chỉ có **số liệu** (báo cáo đã xác nhận, danh mục loại sự cố, mẫu số đã học) được đồng bộ; **ảnh gốc không bao giờ rời thiết bị**.
 
-1. Tạo khóa API tại https://aistudio.google.com/apikey
-2. Trong Vercel: **Project → Settings → Environment Variables**, thêm:
+### 3.1 Tạo dự án Supabase
+1. Vào https://supabase.com → **New project** (gói Free là đủ). Chọn vùng gần bạn (ví dụ Singapore). Đặt mật khẩu database tùy ý (không dùng đến trong app).
+2. **SQL Editor → New query** → dán toàn bộ nội dung file `supabase/schema.sql` → **Run**. Chạy lại nhiều lần cũng an toàn. Lệnh này tạo bảng, bật bảo mật theo hàng (chỉ người đã đăng nhập mới đọc/ghi được) và hàm đếm lượt AI mỗi ngày.
+3. **Authentication → Providers → Email**: bật Email. **Tắt “Allow new users to sign up”** (quan trọng: nếu không, ai biết địa chỉ cũng tự tạo tài khoản được). Có thể tắt “Confirm email” vì ta đăng nhập bằng mã/liên kết.
+4. **Authentication → Users → Add user → Send invitation** (hoặc Create new user): nhập email của từng người trong nhóm.
+5. **Authentication → URL Configuration**: đặt **Site URL** = địa chỉ app trên Vercel (ví dụ `https://qt-web-loc-du-lieu-bao-cao.vercel.app`) và thêm cùng địa chỉ đó vào **Redirect URLs**.
+6. **Authentication → Email Templates → Magic Link**: thêm dòng `Mã đăng nhập: {{ .Token }}` vào nội dung (giữ nguyên liên kết). Nhờ vậy email có **cả liên kết và mã 6 số**. Mã rất hữu ích trên iPhone: khi đã “Thêm vào Màn hình chính”, liên kết trong email mở bằng Safari (phiên riêng), còn mã thì nhập được thẳng vào app.
+7. Lấy hai giá trị ở **Project Settings → API**: **Project URL** và khóa **anon public** (khóa anon là công khai theo thiết kế, an toàn nhờ bước 2–3. **Không dùng** khóa `service_role`).
+8. (Khuyến nghị) Email mặc định của Supabase bị giới hạn vài email/giờ. Nếu cả nhóm đăng nhập cùng lúc hoặc thấy “发送太频繁”, hãy cấu hình SMTP riêng ở **Project Settings → Authentication → SMTP** (ví dụ Resend, Brevo, Gmail SMTP).
 
-| Tên | Giá trị |
-|---|---|
-| `GEMINI_API_KEY` | khóa vừa tạo (bắt buộc) |
-| `APP_ACCESS_KEY` | một chuỗi bí mật dài tự đặt, ví dụ 24 ký tự ngẫu nhiên (bắt buộc) |
-| `GEMINI_MODEL` | tùy chọn. Mặc định `gemini-4-argon` (bản mới nhất, ổn định, ra mắt 30/09/2026). Muốn rẻ và nhanh hơn: `gemini-3.8-flash`. |
-| `GEMINI_THINKING_LEVEL` | tùy chọn: `low` (mặc định), `medium`, `high` hoặc `none` |
+### 3.2 Biến môi trường trên Vercel
+**Project → Settings → Environment Variables**, với **mỗi** biến hãy tick cả Production, Preview, Development:
 
-3. **Redeploy** (Deployments → ⋯ → Redeploy) để biến môi trường có hiệu lực.
-4. Trong app: **设置 → 识别与 AI** → bật “让 Gemini AI 重新识别不确定的行”, địa chỉ để `/api/vision`, dán `APP_ACCESS_KEY` vào ô mật khẩu.
+| Tên | Giá trị | Bắt buộc |
+|---|---|---|
+| `VITE_SUPABASE_URL` | Project URL ở bước 3.1-7 | có |
+| `VITE_SUPABASE_ANON_KEY` | khóa anon public | có |
+| `GEMINI_API_KEY` | khóa tạo tại https://aistudio.google.com/apikey | có (nếu dùng AI) |
+| `AI_DAILY_LIMIT` | số lần gọi AI tối đa mỗi ngày cho cả nhóm, mặc định 200 | không |
+| `GEMINI_MODEL` | model chính, mặc định `gemini-4-argon` | không |
+| `GEMINI_FALLBACK_MODEL` | model dự phòng, mặc định `gemini-3.8-flash`; `none` để tắt | không |
+| `GEMINI_THINKING_LEVEL` | `low` (mặc định), `medium`, `high`, `none` | không |
+| ~~`APP_ACCESS_KEY`~~ | **không còn cần**. Có thể xóa biến này. | — |
+
+Các biến `VITE_…` được đóng gói vào bản build nên **bắt buộc Redeploy** sau khi thêm/sửa (Deployments → ⋯ → Redeploy).
+
+### 3.3 Kiểm tra
+1. Mở `https://<tên-miền>/api/vision` trên trình duyệt: phải thấy `"ok":true,"missing":[],"auth":"supabase"`. Nếu `ok:false`, trường `missing` cho biết còn thiếu biến nào.
+2. Mở app → nhập email đã mời → bấm liên kết trong email hoặc nhập mã 6 số. Xong! Góc trên có nhãn **☁ 已同步**.
+3. Mở app ở thiết bị thứ hai, đăng nhập: báo cáo hiện ra. **设置 → 账号与云** hiện tài khoản, trạng thái đồng bộ và lượng AI đã dùng hôm nay.
+
+### 3.4 Cài lên màn hình điện thoại (PWA)
+- iPhone: Safari → Chia sẻ → **Thêm vào Màn hình chính**. (iOS chưa hỗ trợ “chia sẻ ảnh thẳng vào app”; hãy mở app và bấm “选择图片”.)
+- Android: Chrome → ⋮ → **Cài đặt ứng dụng**. Sau đó từ Thư viện ảnh có thể bấm **Chia sẻ → QT汇总** để đưa ảnh vào app và nhận diện ngay.
+- App mở được cả khi mất mạng; thay đổi được lưu và tự đẩy lên khi có mạng lại.
 
 Ghi chú:
 - `npm run dev` không chạy thư mục `api/`. Muốn thử AI trên máy, dùng `vercel dev`.
@@ -98,7 +121,7 @@ Thêm ảnh mẫu mới để app đọc tốt hơn: chép ảnh vào `test/fixt
 - Đã kiểm thử với bảng đúng mẫu (tiêu đề xanh, cột tên, hai cột số, dòng tổng). Bảng khác hẳn bố cục có thể phải chỉnh `src/core/grid.js`.
 - Ảnh chụp bằng điện thoại (nghiêng, lóa) chưa được hỗ trợ; ảnh chụp màn hình thì tốt.
 - OCR chữ Hán cần mạng ở lần đầu (tải dữ liệu ngôn ngữ). Không có mạng thì tên lạ sẽ để bạn tự chọn.
-- Chưa có đồng bộ giữa nhiều máy/người. Mỗi trình duyệt có dữ liệu riêng; dùng sao lưu/khôi phục để chuyển.
+- Đồng bộ qua Supabase (xem mục 3): báo cáo đã xác nhận, danh mục và mẫu đã học dùng chung cả nhóm; **ảnh và hàng chờ “待复核” chỉ nằm trên thiết bị đã nhập ảnh**. Hai người sửa cùng một báo cáo cùng lúc: bản lưu sau thắng. Hai người cùng sửa danh mục: được gộp (nhãn của người đồng bộ sau thắng, tên gọi/chữ ký được hợp lại; hạng mục vừa bị xóa ở máy khác có thể xuất hiện lại).
 
 ## 8. Xử lý sự cố
 
@@ -108,6 +131,13 @@ Thêm ảnh mẫu mới để app đọc tốt hơn: chép ảnh vào `test/fixt
 | Nhiều ảnh vào “Cần xem lại” | Duyệt vài ảnh đầu, app sẽ học và các ảnh sau thường tự khớp. |
 | Đọc sai số liên tục | Cài đặt → Dữ liệu → “Xóa mẫu đã học”. |
 | Mất dữ liệu sau khi xóa lịch sử duyệt web | Khôi phục từ tệp sao lưu JSON. |
-| Nút AI báo lỗi 401 | Mật khẩu trong 设置 khác `APP_ACCESS_KEY` trên Vercel. |
-| Nút AI báo lỗi 500 | Chưa đặt `GEMINI_API_KEY`/`APP_ACCESS_KEY` hoặc chưa Redeploy. |
-| AI báo lỗi 502 | Khóa Gemini sai/hết hạn mức, hoặc tên `GEMINI_MODEL` không có trong tài khoản. |
+| Thanh AI: “AI 服务端尚未配置” (500) | Thiếu `GEMINI_API_KEY` hoặc `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` (thanh liệt kê đúng biến thiếu), hoặc chưa Redeploy. Sửa xong bấm “立即重试” hoặc để app tự phát hiện. |
+| “登录已失效，请重新登录” | Phiên đăng nhập hết hạn hẳn (hiếm). Bấm “重新登录” rồi nhập email/mã một lần nữa. |
+| “该邮箱没有被邀请” | Email chưa được thêm ở Supabase → Authentication → Users. |
+| Không nhận được email / “发送太频繁” | Kiểm tra thư rác; cấu hình SMTP riêng (3.1-8). |
+| Vào được app nhưng không đồng bộ, báo lỗi 404/“relation does not exist” | Chưa chạy `supabase/schema.sql`. |
+| “今日 AI 次数已用完” | Đạt `AI_DAILY_LIMIT`; tự reset lúc 0 giờ (UTC+7) hoặc tăng giá trị trên Vercel. |
+| “Gemini 密钥无效” | `GEMINI_API_KEY` sai/bị thu hồi. |
+| “模型不可用” | Tên `GEMINI_MODEL` không có trong tài khoản; đặt `GEMINI_MODEL=gemini-3.8-flash`. |
+| “Gemini 额度不足或请求过快” (429) | Hết hạn mức: app tự thử lại sau; cân nhắc bật thanh toán cho dự án Gemini. |
+| Số được đánh dấu “总计推算” | Không có AI, app suy ra số từ dòng tổng của ảnh (chỉ khi có đúng một ô nghi ngờ). Luôn cần bạn nhìn ảnh rồi xác nhận. |

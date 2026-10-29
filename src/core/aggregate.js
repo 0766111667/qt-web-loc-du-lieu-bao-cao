@@ -26,3 +26,20 @@ export function localDate(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+
+export function prevMonthOf(month) {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+
+// So sánh tháng này với tháng trước theo từng hạng mục (cùng danh mục). pct = null khi tháng trước bằng 0.
+export function compareMonths(cur, prev) {
+  const pm = new Map(prev.rows.map((r) => [r.id, r]));
+  const rows = cur.rows.map((r) => {
+    const p = pm.get(r.id) || { occ: 0, proc: 0 };
+    return { id: r.id, label: r.label, occ: r.occ, prevOcc: p.occ, delta: r.occ - p.occ, pct: p.occ ? ((r.occ - p.occ) / p.occ) * 100 : null };
+  });
+  const t = { occ: cur.totals.occ, prevOcc: prev.totals.occ, delta: cur.totals.occ - prev.totals.occ };
+  t.pct = prev.totals.occ ? (t.delta / prev.totals.occ) * 100 : null;
+  return { month: cur.month, prevMonth: prev.month, rows, totals: t, prevReportCount: prev.reportCount };
+}

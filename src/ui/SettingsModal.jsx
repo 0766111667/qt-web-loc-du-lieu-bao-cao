@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { useStore, openSettings, updateSettings, catalogOps, buildBackup, restoreBackup, resetLearning, wipeAll, toast } from '../app/store.js';
+import { useStore, openSettings, updateSettings, testAi, runSync, signOutCloud, catalogOps, buildBackup, restoreBackup, resetLearning, wipeAll, toast } from '../app/store.js';
 import { orderedItems } from '../core/catalog.js';
 import { ConfirmButton, download } from './bits.jsx';
 
@@ -57,11 +57,36 @@ function ReadingPane() {
         <select value={st.concurrency} onChange={(e) => updateSettings({ concurrency: Number(e.target.value) })}>{[1, 2, 3, 4].map((n) => <option value={n}>{n}</option>)}</select>
       </label>
       <hr />
-      <Toggle k="aiEnabled" hint="仅发送不确定的行（很小的图片片段），且仅在图片未通过校验时发送。需要在 Vercel 上配置服务端（Gemini）。">让 Gemini AI 重新识别不确定的行</Toggle>
+      <Toggle k="aiEnabled" hint="只发送不确定的行（很小的图片片段）。校验未通过的图片会自动交给 AI；失败时在后台自动重试，不需要手动开关。">用 Gemini AI 自动重新识别不确定的行</Toggle>
       {st.aiEnabled && <>
         <label class="field">AI 服务地址<input value={st.aiEndpoint} onChange={(e) => updateSettings({ aiEndpoint: e.target.value.trim() })} /></label>
-        <label class="field">访问密码（APP_ACCESS_KEY）<input type="password" autoComplete="off" value={st.aiKey} onChange={(e) => updateSettings({ aiKey: e.target.value })} /></label>
+        {s.auth.status === 'off' && <label class="field">访问密码（APP_ACCESS_KEY，未启用登录时使用）<input type="password" autoComplete="off" value={st.aiKey} onChange={(e) => updateSettings({ aiKey: e.target.value })} /></label>}
+        <div class="row-gap">
+          <button onClick={testAi} disabled={s.ai.checking}>{s.ai.checking ? '检查中…' : '检查 AI 连接'}</button>
+          {s.ai.status === 'ok' && <span class="ai-ok">✓ 连接正常{s.ai.model ? `（模型 ${s.ai.model}）` : ''}</span>}
+          {s.ai.status === 'error' && <span class="ai-bad">✗ {s.ai.message}</span>}
+        </div>
       </>}
+    </div>
+  );
+}
+
+function AccountPane() {
+  const s = useStore();
+  const { status, pending, lastAt, error } = s.sync;
+  const u = s.ai.usage;
+  if (s.auth.status === 'off') return <div class="stack"><p class="warn-box">尚未配置 Supabase：数据只保存在这台设备上，也没有登录和多设备同步。配置方法见 README 的“第 3 步”。</p></div>;
+  return (
+    <div class="stack">
+      <div><h3>账号</h3><p>已登录：<b>{s.auth.email || '—'}</b></p><p class="hint">这台设备会保持登录，不需要再输入密码。</p><button onClick={signOutCloud}>退出登录</button></div>
+      <div><h3>云同步</h3>
+        <p>{status === 'syncing' ? '同步中…' : status === 'offline' ? '离线：恢复网络后自动同步。' : status === 'error' ? `同步出错：${error}` : '已连接到团队共用的数据。'}{pending > 0 && ` 有 ${pending} 项等待上传。`}</p>
+        {lastAt > 0 && <p class="hint">上次同步：{new Date(lastAt).toLocaleString('zh-CN')}</p>}
+        <p class="hint">同步内容：已确认的报告、问题类型、已学习的数字样本。原图不会上传，待复核的图片只在导入它的设备上。</p>
+        <button onClick={() => runSync({ manual: true })} disabled={status === 'syncing'}>立即同步</button></div>
+      <div><h3>今日 AI 用量</h3>
+        <p>{u && u.n != null ? <>已用 <b>{u.n}</b> / {u.max} 次（全团队合计，当地 0 点重置）</> : '暂无数据（首次使用 AI 或点击“检查 AI 连接”后显示）'}</p>
+        <button onClick={testAi} disabled={s.ai.checking}>{s.ai.checking ? '检查中…' : '检查 AI 连接'}</button></div>
     </div>
   );
 }
@@ -72,7 +97,7 @@ function DataPane() {
   return (
     <div class="stack">
       {!s.persistent && <p class="warn-box">浏览器禁止了本地存储（可能是隐私模式）。关闭标签页后数据会丢失，请经常备份。</p>}
-      <div><h3>备份</h3><p class="hint">备份文件包含报告、问题类型和已学习的样本，不含原图和 AI 访问密码。</p>
+      <div><h3>备份</h3><p class="hint">备份文件包含报告、问题类型和已学习的样本，不含原图。</p>
         <div class="row-gap">
           <button onClick={() => download(`qt-backup-${new Date().toISOString().slice(0, 10)}.json`, buildBackup(), 'application/json')}>下载备份</button>
           <label class="file-btn">从文件恢复<input type="file" accept="application/json,.json" hidden onChange={async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { await restoreBackup(await f.text()); } catch (err) { toast(String(err.message || err)); } }} /></label>
@@ -88,13 +113,13 @@ function DataPane() {
 export function SettingsModal() {
   const [tab, setTab] = useState('catalog');
   useEffect(() => { const k = (e) => e.key === 'Escape' && openSettings(false); document.addEventListener('keydown', k); return () => document.removeEventListener('keydown', k); }, []);
-  const tabs = [['catalog', '问题类型'], ['read', '识别与 AI'], ['data', '数据']];
+  const tabs = [['catalog', '问题类型'], ['read', '识别与 AI'], ['account', '账号与云'], ['data', '数据']];
   return (
     <div class="modal-back" onMouseDown={(e) => e.target === e.currentTarget && openSettings(false)}>
       <div class="modal" role="dialog" aria-modal="true" aria-label="设置">
         <div class="modal-head"><h2>设置</h2><button class="quiet" onClick={() => openSettings(false)}>关闭</button></div>
         <div class="seg modal-tabs">{tabs.map(([k, l]) => <button class={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
-        <div class="modal-body">{tab === 'catalog' ? <CatalogPane /> : tab === 'read' ? <ReadingPane /> : <DataPane />}</div>
+        <div class="modal-body">{tab === 'catalog' ? <CatalogPane /> : tab === 'read' ? <ReadingPane /> : tab === 'account' ? <AccountPane /> : <DataPane />}</div>
       </div>
     </div>
   );

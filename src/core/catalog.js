@@ -104,3 +104,20 @@ export function mergeItems(cat, fromId, toId) {
     : { ...x });
   return { catalog: { ...cat, items }, map: { [fromId]: toId } };
 }
+
+// Gộp hai danh mục khi hai người cùng sửa (không có bản gốc để so 3 chiều): hạng mục dùng chung giữ tên/nhãn/ẩn của BẢN LOCAL
+// (thao tác vừa làm), còn tên gọi và chữ ký là hợp của hai bên; hạng mục chỉ có ở bên kia được thêm vào cuối.
+export function mergeCatalogs(local, remote) {
+  const dedupe = (list, cap) => { const out = []; for (const s of list) if (!out.some((o) => sigDistance(o, s) < 0.04)) out.push(s); return out.slice(-cap); };
+  const rItems = new Map((remote.items || []).map((i) => [i.id, i]));
+  const items = local.items.map((li) => {
+    const ri = rItems.get(li.id);
+    return ri ? { ...li, aliases: [...new Set([...li.aliases, ...ri.aliases])], sigs: dedupe([...li.sigs, ...ri.sigs], MAX_SIGS) } : { ...li };
+  });
+  for (const ri of remote.items || []) if (!local.items.some((x) => x.id === ri.id)) items.push({ ...ri });
+  return {
+    ...local, items,
+    totalSigs: dedupe([...(local.totalSigs || []), ...(remote.totalSigs || [])], MAX_SIGS),
+    totalAliases: [...new Set([...(local.totalAliases || []), ...(remote.totalAliases || [])])],
+  };
+}

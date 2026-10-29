@@ -17,6 +17,8 @@ export function validate(rows, total, { minConfidence = MIN_CONFIDENCE, requireP
       if (requireProcessedLE && r.proc.value > r.occ.value) issues.push({ code: 'processed_exceeds', row: i });
     }
     if (!r.itemId) issues.push({ code: 'unknown_name', row: i });
+    // Số suy ra từ tổng (không phải do đọc được) luôn cần người nhìn lại ảnh, không bao giờ tự duyệt.
+    if (r.occ.suggested || r.proc.suggested) issues.push({ code: 'suggested', row: i });
   });
   const sums = sumRows(rows);
   if (!rows.length) issues.push({ code: 'no_rows' });
