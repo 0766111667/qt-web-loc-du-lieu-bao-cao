@@ -23,7 +23,7 @@ const KINDS = new Set(['occ', 'proc', 'name', 'tot_occ', 'tot_proc']);
 const MODEL_RE = /^[a-z0-9.\-]+$/i;
 
 const cfg = () => ({
-  key: process.env.GEMINI_API_KEY || '',
+  key: String(process.env.GEMINI_API_KEY || '').replace(/[\s"'\u200b\ufeff]/g, ''),   // 粘贴时常带入空格/换行/引号：自动去除
   sbUrl: (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').replace(/\/+$/, ''),
   sbAnon: process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '',
   dailyLimit: Math.max(1, Number(process.env.AI_DAILY_LIMIT) || 100),
@@ -216,7 +216,7 @@ async function callGemini(parts, c, signal, system) {
       catch (e) {
         if (e instanceof ApiError) throw e;
         if (signal.aborted) throw new ApiError(502, 'timeout', 'AI 响应超时');
-        lastErr = new ApiError(502, 'upstream', '无法连接 AI 服务');
+        lastErr = new ApiError(502, 'upstream', '无法连接 AI 服务', { detail: reason(e) });
         if (attempt === 0) await sleep(c.retryDelay, signal);
         continue;
       }
@@ -326,6 +326,12 @@ export default async function handler(req, res) {
 }
 
 // 诊断：用最便宜的文字请求测试第一个模型，把 Google 的真实回应（额度类型、等待时间）原样告诉用户。
+// 把底层错误翻译成可读原因（不含密钥）。
+function reason(e) {
+  if (e?.name === 'AbortError') return '连接 Gemini 超时';
+  const m = String(e?.cause?.code || e?.cause?.message || e?.message || e).replace(/AIza[0-9A-Za-z_-]{10,}/g, '[key]').replace(/[\u0000-\u001f]/g, ' ').slice(0, 140);
+  return /header|character|ByteString/i.test(m) ? `GEMINI_API_KEY 含有非法字符（请在 Vercel 重新粘贴，只保留密钥本身）：${m}` : `请求 Gemini 失败：${m}`;
+}
 async function probe(c, ctl) {
   try {
     const models = await resolveModels(c, ctl.signal);
@@ -337,5 +343,5 @@ async function probe(c, ctl) {
     if (r.ok) return { ok: true, model };
     const g = await googleError(r);
     return { ok: false, model, status: g.status, scope: g.scope, retryAfter: g.retry || null, detail: g.detail, code: r.status === 429 ? (g.scope === 'day' ? 'quota_day' : 'quota_minute') : r.status === 404 ? 'bad_model' : r.status === 401 || r.status === 403 ? 'gemini_key' : 'upstream' };
-  } catch { return { ok: false, code: 'upstream', detail: '无法连接 Gemini' }; }
+  } catch (e) { return { ok: false, code: 'upstream', detail: reason(e) }; }
 }

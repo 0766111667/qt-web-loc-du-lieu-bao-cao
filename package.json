@@ -1,6 +1,6 @@
 {
   "name": "qt-report-aggregator",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "private": true,
   "type": "module",
   "description": "识别 QT 软件问题统计表截图，校验一致后按月累计。问题类型可动态增删。",
