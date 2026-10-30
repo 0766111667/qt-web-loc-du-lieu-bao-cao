@@ -18,7 +18,7 @@ const MAX_ITEMS = 40;
 const MAX_IMAGE_CHARS = 120_000;     // 单个单元格截图（base64）上限，约 90 KB
 const MAX_TOTAL_CHARS = 2_400_000;   // 整个请求的图片上限
 const MAX_BODY_BYTES = 3_500_000;    // 小于 Vercel 的 4.5 MB 平台限制
-const DEADLINE_MS = 25_000;          // 总时限；客户端超时更长一点，避免卡住队列
+const DEADLINE_MS = 40_000;          // 总时限；客户端超时更长一点，避免卡住队列
 const KINDS = new Set(['occ', 'proc', 'name', 'tot_occ', 'tot_proc']);
 const MODEL_RE = /^[a-z0-9.\-]+$/i;
 
@@ -31,6 +31,8 @@ const cfg = () => ({
   fallback: (process.env.GEMINI_FALLBACK_MODEL || 'auto').trim(),
   thinking: (process.env.GEMINI_THINKING_LEVEL || 'low').trim(),
   retryDelay: Number(process.env.AI_RETRY_DELAY_MS ?? 700),
+  attemptMs: Number(process.env.AI_ATTEMPT_MS ?? 14000),
+  hedgeMs: Number(process.env.AI_HEDGE_MS ?? 6000),
 });
 
 const SYSTEM = `You read single cells cropped from a screenshot of a Chinese issue-statistics table.
@@ -151,15 +153,25 @@ export function rankModels(list) {
   const ver = (n) => parseFloat(/gemini-(\d+(?:\.\d+)?)/.exec(n)?.[1] || '0');
   return list.filter((n) => /^gemini-/i.test(n) && !EXCLUDE.test(n)).sort((a, b) => score(b) - score(a) || ver(b) - ver(a) || a.length - b.length);
 }
+// 最近失败（过载/超时）的模型暂时排到后面，避免每次都先撞上同一个坏模型。
+const health = new Map();
+const demote = (m, ms) => health.set(m, Date.now() + ms);
 async function resolveModels(c, signal) {
   const list = await listModels(c, signal);
   const want = [c.model, c.fallback].filter((m) => m && m !== 'auto' && m !== 'none' && MODEL_RE.test(m));
-  if (!list) return [...new Set([...want, ...(want.length ? [] : ['gemini-3.8-flash'])])];
-  const ranked = rankModels(list);
-  const primary = want[0] && list.includes(want[0]) ? want[0] : ranked[0];
-  let second = c.fallback === 'none' ? null : want[1] && list.includes(want[1]) ? want[1] : null;
-  if (!second && c.fallback !== 'none') { const fam = (n) => (/flash-lite/i.test(n) ? 'lite' : /flash/i.test(n) ? 'flash' : 'x'); second = ranked.find((n) => n !== primary && fam(n) !== fam(primary)) || ranked.find((n) => n !== primary) || null; }
-  return [primary, second].filter(Boolean);
+  let order;
+  if (!list) order = [...new Set([...want, 'gemini-3.8-flash', 'gemini-3.8-flash-lite'])];
+  else {
+    const ranked = rankModels(list);
+    const fam = (n) => (/flash-lite/i.test(n) ? 'lite' : /flash/i.test(n) ? 'flash' : 'x');
+    const primary = want[0] && list.includes(want[0]) ? want[0] : ranked[0];
+    const second = want[1] && list.includes(want[1]) ? want[1] : ranked.find((n) => n !== primary && fam(n) !== fam(primary)) || ranked.find((n) => n !== primary);
+    order = [...new Set([primary, second, ...ranked].filter(Boolean))];
+  }
+  if (c.fallback === 'none') order = order.slice(0, 1);
+  order = order.slice(0, 3);
+  const ok = order.filter((m) => (health.get(m) || 0) < Date.now());
+  return [...ok, ...order.filter((m) => !ok.includes(m))];
 }
 
 // ---------- 调用 Gemini ----------
@@ -203,40 +215,63 @@ async function callModel(model, parts, c, signal, system) {
   return last;
 }
 
-// 429（额度）不在同一模型上重试（那只会白白消耗额度）：直接换备用模型；5xx/网络错误才对同一模型重试一次。
+// 一次尝试 = 一个模型、一次请求（400 时依次去掉 schema/thinking）。有自己的超时；读完回复才算成功。
+async function attempt(model, parts, c, signal, system) {
+  let r;
+  try { r = await callModel(model, parts, c, signal, system); }
+  catch (e) { throw new ApiError(502, signal.aborted ? 'timeout' : 'upstream', signal.aborted ? `模型 ${model} 响应太慢` : '无法连接 AI 服务', { detail: signal.aborted ? '' : reason(e), model }); }
+  if (r.ok) {
+    try { return { data: await r.json(), model }; }
+    catch (e) { throw new ApiError(502, signal.aborted ? 'timeout' : 'upstream', signal.aborted ? `模型 ${model} 响应太慢` : 'AI 回复不完整', { model }); }
+  }
+  if (r.status === 401 || r.status === 403) throw new ApiError(502, 'gemini_key', 'Gemini 密钥无效或无权限（请检查 GEMINI_API_KEY）');
+  const g = await googleError(r);
+  if (r.status === 404) { modelCache = { at: 0, list: null }; throw new ApiError(502, 'bad_model', `模型“${model}”不可用`, { model }); }
+  if (r.status === 429) throw new ApiError(429, g.scope === 'day' ? 'quota_day' : 'quota_minute', 'quota', { retryAfter: g.retry || 0, detail: g.detail, model });
+  throw new ApiError(502, 'upstream', `AI 服务出错（${r.status}，${model}）${r.status === 503 ? '：模型过载' : ''}`, { detail: g.detail, model });
+}
+
+function summarize(errs) {
+  const q = errs.filter((x) => x.code === 'quota_day' || x.code === 'quota_minute');
+  if (q.length && q.length === errs.length && q.every((x) => x.code === 'quota_day')) return new ApiError(429, 'quota_day', 'Gemini 今日额度已用完（免费版每天有限），明天恢复', { detail: q[0].extra.detail });
+  if (q.length) { const wait = Math.max(5, Math.min(...q.map((x) => x.extra.retryAfter || 0).filter(Boolean), 90) || 45); return new ApiError(429, 'quota_minute', `Gemini 每分钟请求过多，约 ${Math.ceil(wait)} 秒后再试`, { retryAfter: wait, detail: q[0].extra.detail }); }
+  return errs.find((x) => x.code === 'bad_model') && errs.length === 1 ? errs[0] : errs.find((x) => x.code === 'upstream') || errs[errs.length - 1] || new ApiError(502, 'upstream', 'AI 服务暂时不可用');
+}
+
+// “对冲”调用：先问第一个模型；它失败，或超过 HEDGE 秒还没回应，就同时再问下一个模型，谁先成功用谁。
+// 这样某个模型过载/卡住，不会拖慢整个请求；每个模型只请求一次，不会反复消耗额度。
 async function callGemini(parts, c, signal, system) {
   const models = await resolveModels(c, signal);
   if (!models.length) throw new ApiError(502, 'bad_model', '没有可用的 Gemini 模型（请检查 GEMINI_API_KEY 的权限）');
-  let lastErr = new ApiError(502, 'upstream', 'AI 服务暂时不可用');
-  const quota = [];
-  for (const model of models) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      let r;
-      try { r = await callModel(model, parts, c, signal, system); }
-      catch (e) {
-        if (e instanceof ApiError) throw e;
-        if (signal.aborted) throw new ApiError(502, 'timeout', 'AI 响应超时');
-        lastErr = new ApiError(502, 'upstream', '无法连接 AI 服务', { detail: reason(e) });
-        if (attempt === 0) await sleep(c.retryDelay, signal);
-        continue;
-      }
-      if (r.ok) return { r, model };
-      if (r.status === 401 || r.status === 403) throw new ApiError(502, 'gemini_key', 'Gemini 密钥无效或无权限（请检查 GEMINI_API_KEY）');
-      if (r.status === 404) { modelCache = { at: 0, list: null }; lastErr = new ApiError(502, 'bad_model', `模型“${model}”不可用（请检查 GEMINI_MODEL，或设为 auto）`); break; }
-      if (r.status === 429) { quota.push({ model, ...(await googleError(r)) }); break; }
-      if (r.status === 400) { const g = await googleError(r); lastErr = new ApiError(502, 'upstream', `AI 服务拒绝了请求（400，${model}）`, { detail: g.detail }); break; }
-      lastErr = new ApiError(502, 'upstream', `AI 服务出错（${r.status}）`);
-      if (attempt === 0) await sleep(c.retryDelay, signal);
-    }
-  }
-  if (quota.length) {
-    const allDay = quota.every((q) => q.scope === 'day');
-    const wait = Math.max(5, Math.min(...quota.map((q) => q.retry || 0).filter(Boolean), 90) || 45);
-    throw allDay
-      ? new ApiError(429, 'quota_day', 'Gemini 今日额度已用完（免费版每天有限），明天恢复', { detail: quota[0].detail, models: quota.map((q) => q.model) })
-      : new ApiError(429, 'quota_minute', `Gemini 每分钟请求过多，约 ${Math.ceil(wait)} 秒后再试`, { retryAfter: wait, detail: quota[0].detail, scopeKnown: quota[0].scope !== 'unknown' });
-  }
-  throw lastErr;
+  return new Promise((resolve, reject) => {
+    const errs = []; const ctls = [];
+    let launched = 0, pending = 0, settled = false, timer = 0;
+    const finish = (fn, v) => { if (settled) return; settled = true; clearTimeout(timer); ctls.forEach((x) => x.abort()); fn(v); };
+    const onOuter = () => finish(reject, new ApiError(502, 'timeout', 'AI 响应超时'));
+    signal.addEventListener('abort', onOuter, { once: true });
+    const launch = () => {
+      if (settled || launched >= models.length) return false;
+      const model = models[launched++]; pending++;
+      const ctl = new AbortController(); ctls.push(ctl);
+      const t = setTimeout(() => ctl.abort(), c.attemptMs);
+      attempt(model, parts, c, ctl.signal, system).then(
+        (v) => { clearTimeout(t); finish(resolve, v); },
+        (e) => {
+          clearTimeout(t); pending--;
+          if (settled) return;
+          const err = e instanceof ApiError ? e : new ApiError(502, 'upstream', 'AI 服务出错', { model });
+          if (err.code === 'upstream' || err.code === 'timeout') demote(model, 5 * 60_000);
+          if (err.code === 'quota_minute') demote(model, 60_000);
+          errs.push(err);
+          if (err.code === 'gemini_key') return finish(reject, err);
+          if (!launch() && pending === 0) finish(reject, summarize(errs));
+        });
+      clearTimeout(timer);
+      if (launched < models.length) timer = setTimeout(launch, c.hedgeMs);
+      return true;
+    };
+    launch();
+  });
 }
 
 const clean = (s, n) => String(s ?? '').replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029]/g, '').slice(0, n);
@@ -260,7 +295,7 @@ export default async function handler(req, res) {
     try { auth = await authorize(c, req); } catch (e) { if (e.code === 'not_configured') return res.status(200).json({ ok: false, missing: e.extra.missing, authorized: false }); }
     if (!auth.ok || !auth.member) return res.status(200).json({ ok: true, missing: [], authorized: false });
     const out = { ok: true, missing: [], authorized: true, user: auth.user.email || null, usage: await readUsage(c, auth.token) };
-    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 25000);
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 20000);
     try {
       const models = await resolveModels(c, ctl.signal); out.model = models[0] || null; out.fallbackModel = models[1] || null;
       if (/^(1|true)$/.test(String(req.query?.probe ?? new URL(req.url || '/', 'http://x').searchParams.get('probe') ?? ''))) {
@@ -302,8 +337,7 @@ export default async function handler(req, res) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), DEADLINE_MS);
   try {
-    const { r, model } = await callGemini(parts, c, ctl.signal, SYSTEM);
-    const data = await r.json();
+    const { data, model } = await callGemini(parts, c, ctl.signal, SYSTEM);
     if (data.promptFeedback?.blockReason) throw new ApiError(502, 'blocked', 'AI 拒绝处理该内容');
     const text = (data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought && typeof p.text === 'string').map((p) => p.text).join('');
     let json;
@@ -337,20 +371,24 @@ async function probe(c, ctl) {
     const configured = await resolveModels(c, ctl.signal);
     const list = await listModels(c, ctl.signal);
     const cands = [...new Set([...configured, ...rankModels(list || []).slice(0, 4)])].slice(0, 4);
-    const tried = [];
-    let first = null;
-    for (const model of cands) {
-      const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-        method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-goog-api-key': c.key },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Reply with the single word OK.' }] }], generationConfig: { maxOutputTokens: 8 } }),
-      });
-      if (r.ok) { tried.push({ model, ok: true }); return { ok: true, model, tried, primaryFailed: !!first }; }
-      const g = await googleError(r);
-      const code = r.status === 429 ? (g.scope === 'day' ? 'quota_day' : 'quota_minute') : r.status === 404 ? 'bad_model' : r.status === 401 || r.status === 403 ? 'gemini_key' : 'upstream';
-      tried.push({ model, ok: false, status: g.status, code });
-      first ||= { ok: false, model, status: g.status, scope: g.scope, retryAfter: g.retry || null, detail: g.detail, code };
-      if (code === 'gemini_key') break;                          // 密钥问题：换模型没有用
-    }
-    return { ...first, tried };
+    const one = async (model) => {
+      const t = new AbortController(); const timer = setTimeout(() => t.abort(), 10_000);
+      try {
+        const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+          method: 'POST', signal: t.signal, headers: { 'content-type': 'application/json', 'x-goog-api-key': c.key },
+          body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Reply with the single word OK.' }] }], generationConfig: { maxOutputTokens: 8 } }),
+        });
+        if (r.ok) return { model, ok: true };
+        const g = await googleError(r);
+        const code = r.status === 429 ? (g.scope === 'day' ? 'quota_day' : 'quota_minute') : r.status === 404 ? 'bad_model' : r.status === 401 || r.status === 403 ? 'gemini_key' : 'upstream';
+        return { model, ok: false, status: g.status, scope: g.scope, retryAfter: g.retry || null, detail: g.detail, code };
+      } catch (e) { return { model, ok: false, code: t.signal.aborted ? 'timeout' : 'upstream', detail: t.signal.aborted ? '10 秒内没有响应' : reason(e) }; }
+      finally { clearTimeout(timer); }
+    };
+    const results = await Promise.all(cands.map(one));                  // 并行：总耗时约等于最慢的一个（最多 10 秒）
+    const tried = results.map((x) => ({ model: x.model, ok: x.ok, status: x.status, code: x.code }));
+    const good = results.find((x) => x.ok);
+    if (good) return { ok: true, model: good.model, tried, primaryFailed: results[0] !== good };
+    return { ...results[0], tried };
   } catch (e) { return { ok: false, code: 'upstream', detail: reason(e) }; }
 }

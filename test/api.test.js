@@ -5,6 +5,8 @@ process.env.GEMINI_API_KEY = 'test-key';
 process.env.VITE_SUPABASE_URL = 'https://proj.supabase.co';
 process.env.VITE_SUPABASE_ANON_KEY = 'anon-key';
 process.env.AI_RETRY_DELAY_MS = '0';
+process.env.AI_HEDGE_MS = '40';
+process.env.AI_ATTEMPT_MS = '400';
 process.env.AI_DAILY_LIMIT = '5';
 delete process.env.GEMINI_MODEL; delete process.env.GEMINI_FALLBACK_MODEL;
 const { default: handler, rankModels } = await import('../api/vision.js');
@@ -92,7 +94,7 @@ test('API: 429 每分钟额度 → 不对同一模型重试，换备用模型；
   try { const r = res(); await handler(req(), r); assert.equal(r.code, 200); assert.match(r.body.model, /flash-lite/); } finally { w.restore(); }
 });
 
-test('API: 400 时依次去掉 schema、thinking；5xx 同一模型只重试一次', async () => {
+test('API: 400 时依次去掉 schema、thinking；5xx 每个模型只请求一次、立刻换下一个', async () => {
   let n = 0;
   let w = world({ gemini: async () => (++n < 3 ? jres(400, {}) : jres(200, { candidates: [{ content: { parts: [{ text: '{"items":[{"id":"3","value":1,"text":"1"}]}' }] } }] })) });
   try {
@@ -102,7 +104,7 @@ test('API: 400 时依次去掉 schema、thinking；5xx 同一模型只重试一�
     assert.ok(g[0].responseJsonSchema && g[0].thinkingConfig); assert.ok(!g[1].responseJsonSchema && g[1].thinkingConfig); assert.ok(!g[2].responseJsonSchema && !g[2].thinkingConfig);
   } finally { w.restore(); }
   w = world({ gemini: async () => jres(503, {}) });
-  try { const r = res(); await handler(req(), r); assert.equal(r.code, 502); assert.equal(r.body.code, 'upstream'); assert.equal(gem(w.calls).length, 4); } finally { w.restore(); }   // 2 个模型 × 2 次
+  try { const r = res(); await handler(req(), r); assert.equal(r.code, 502); assert.equal(r.body.code, 'upstream'); assert.equal(gem(w.calls).length, 2); } finally { w.restore(); }   // 每个模型只请求一次，不反复消耗额度
 });
 
 test('API: 每日上限、计数失败、数据库未初始化 → 都不会调用 Gemini（fail-closed）', async () => {
@@ -149,4 +151,17 @@ test('API: probe 逐个测试模型——主模型 503 时自动试下一个，�
     assert.equal(r.body.probe.ok, true); assert.equal(r.body.probe.primaryFailed, true); assert.match(r.body.probe.model, /flash-lite/);
     assert.equal(r.body.probe.tried[0].ok, false); assert.equal(r.body.probe.tried[0].status, 503);
   } finally { w.restore(); }
+});
+
+test('API: 对冲调用——第一个模型卡住/过载时，第二个模型照样在时限内返回结果', async () => {
+  const good = jres(200, { candidates: [{ content: { parts: [{ text: '{"items":[{"id":"3","value":4,"text":"4"}]}' }] } }] });
+  // 主模型永远不回应（直到被中止）→ 40ms 后启动备用模型，备用模型成功
+  let w = world({ gemini: (url, _b, _c) => (url.includes('flash-lite') ? Promise.resolve(good) : new Promise(() => {})) });
+  try { const t0 = Date.now(); const r = res(); await handler(req(), r); assert.equal(r.code, 200); assert.match(r.body.model, /flash-lite/); assert.ok(Date.now() - t0 < 350); } finally { w.restore(); }
+  // 主模型 503（过载）→ 立刻换备用模型
+  w = world({ gemini: async (url) => (url.includes('flash-lite') ? good : jres(503, { error: { message: 'high demand' } })) });
+  try { const r = res(); await handler(req(), r); assert.equal(r.code, 200); assert.equal(r.body.items[0].value, 4); } finally { w.restore(); }
+  // 所有模型都卡住 → 在单次时限内返回 timeout（而不是一直挂着）
+  w = world({ gemini: () => new Promise(() => {}) });
+  try { const r = res(); await handler(req(), r); assert.equal(r.code, 502); assert.equal(r.body.code, 'timeout'); assert.equal(r.body.retryable, true); } finally { w.restore(); }
 });

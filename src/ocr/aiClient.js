@@ -42,7 +42,7 @@ async function fetchWithTimeout(url, init, ms, fetchImpl) {
 
 // Gọi AI: tối đa 2 lần, và chỉ thử lại lỗi tạm thời của máy chủ/mạng (5xx, parse, mất mạng) một lần.
 // Hết hạn mức / rate limit / lỗi cấu hình → ném ngay. Token hết hạn (unauthorized) → lấy token mới một lần.
-export async function callVision({ endpoint, getHeaders, body, attempts = 2, delay = 1500, timeoutMs = 32_000, fetchImpl = globalThis.fetch, sleep = defaultSleep }) {
+export async function callVision({ endpoint, getHeaders, body, attempts = 2, delay = 1500, timeoutMs = 48_000, fetchImpl = globalThis.fetch, sleep = defaultSleep }) {
   let last, refreshed = false, force = false;
   for (let i = 0; i < attempts + 1; i++) {
     try {
@@ -66,7 +66,7 @@ export async function callVision({ endpoint, getHeaders, body, attempts = 2, del
 }
 
 // Kiểm tra bằng GET (rẻ, không gọi Gemini; probe=true thì gọi một yêu cầu rất nhỏ để biết hạn mức thật).
-export async function checkAi({ endpoint, getHeaders, probe = false, fetchImpl = globalThis.fetch, timeoutMs = 15_000 }) {
+export async function checkAi({ endpoint, getHeaders, probe = false, fetchImpl = globalThis.fetch, timeoutMs = 30_000 }) {
   const auth = (await getHeaders(false)) || {};
   let res;
   try { res = await fetchWithTimeout(probe ? `${endpoint}?probe=1` : endpoint, { method: 'GET', headers: auth }, timeoutMs, fetchImpl); }
