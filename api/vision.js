@@ -83,7 +83,7 @@ async function sb(c, path, token, init = {}) {
   return fetch(`${c.sbUrl}${path}`, { ...init, headers: { apikey: c.sbAnon, authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers || {}) } });
 }
 const unavailable = () => new ApiError(503, 'auth_unavailable', '暂时无法验证登录状态，请稍后再试');
-const schemaMissing = () => new ApiError(500, 'not_configured', '数据库尚未初始化：请先在 Supabase 的 SQL Editor 运行 supabase/schema.sql', { missing: ['supabase/schema.sql'] });
+const schemaMissing = () => new ApiError(500, 'not_configured', '数据库尚未更新：请在 Supabase → SQL Editor 运行最新的 supabase/schema.sql（不是 Vercel 变量问题）', { missing: ['supabase/schema.sql'] });
 
 async function verifyToken(c, token) {
   const h = createHash('sha256').update(token).digest('hex');

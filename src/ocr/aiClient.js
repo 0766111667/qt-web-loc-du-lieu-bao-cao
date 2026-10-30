@@ -74,7 +74,11 @@ export async function checkAi({ endpoint, getHeaders, probe = false, fetchImpl =
   if (!res.ok) { const e = await readError(res); return { ready: false, code: e.code, message: e.message, retryable: e.retryable, retryAfter: e.retryAfter }; }
   const j = await res.json().catch(() => null);
   if (!j) return { ready: false, code: 'unreachable', message: '找不到 AI 服务地址（返回的不是 JSON）', retryable: false };
-  if (!j.ok) return { ready: false, code: 'not_configured', missing: j.missing || [], message: `服务器尚未配置：缺少 ${(j.missing || []).join('、')}（在 Vercel 设置后需要 Redeploy）`, retryable: false };
+  if (!j.ok) {
+    const missing = j.missing || [];
+    const schema = missing.includes('supabase/schema.sql');
+    return { ready: false, code: 'not_configured', missing, retryable: false, message: schema ? '数据库尚未更新：请在 Supabase → SQL Editor 运行最新的 supabase/schema.sql（不是 Vercel 变量问题）' : `服务器尚未配置：缺少 ${missing.join('、')}（在 Vercel 设置后需要 Redeploy）` };
+  }
   if (!Object.keys(auth).length) return { ready: false, code: 'no_key', message: '尚未登录', retryable: false };
   if (!j.authorized) return { ready: false, code: 'unauthorized', message: '登录已失效或此账号没有权限，请重新登录', retryable: false };
   const u = j.usage;

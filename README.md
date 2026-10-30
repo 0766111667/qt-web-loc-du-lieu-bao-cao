@@ -140,6 +140,7 @@ Thêm ảnh mẫu mới để app đọc tốt hơn: chép ảnh vào `test/fixt
 | Thanh AI: “AI 服务端尚未配置” | Thiếu `GEMINI_API_KEY` hoặc `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` (thanh liệt kê đúng biến thiếu), hoặc chưa Redeploy. |
 | “登录已失效，请重新登录” | Bấm “重新登录” rồi nhập lại `admin` + mật khẩu một lần. |
 | “账号或密码错误” | Kiểm tra user `admin@qt.app` đã tạo ở Supabase (3.1-4) với Auto Confirm; mật khẩu đúng. |
+| “数据库尚未更新 … schema.sql” | Chưa chạy (hoặc chưa chạy bản mới của) `supabase/schema.sql`: Supabase → SQL Editor → dán toàn bộ → Run. Không cần Redeploy. |
 | “此账号没有使用权限” | Email chưa có trong bảng `allowed_members` (chạy lại `schema.sql`). |
 | Vào được app nhưng không đồng bộ, báo lỗi 404/“relation does not exist” | Chưa chạy `supabase/schema.sql`. |
 | “今日 AI 次数已用完” | Đạt `AI_DAILY_LIMIT`; tự reset 0 giờ (UTC+7) hoặc tăng giá trị trên Vercel. |
