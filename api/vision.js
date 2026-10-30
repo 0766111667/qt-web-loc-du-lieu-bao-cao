@@ -260,7 +260,7 @@ export default async function handler(req, res) {
     try { auth = await authorize(c, req); } catch (e) { if (e.code === 'not_configured') return res.status(200).json({ ok: false, missing: e.extra.missing, authorized: false }); }
     if (!auth.ok || !auth.member) return res.status(200).json({ ok: true, missing: [], authorized: false });
     const out = { ok: true, missing: [], authorized: true, user: auth.user.email || null, usage: await readUsage(c, auth.token) };
-    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 8000);
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 25000);
     try {
       const models = await resolveModels(c, ctl.signal); out.model = models[0] || null; out.fallbackModel = models[1] || null;
       if (/^(1|true)$/.test(String(req.query?.probe ?? new URL(req.url || '/', 'http://x').searchParams.get('probe') ?? ''))) {
@@ -334,14 +334,23 @@ function reason(e) {
 }
 async function probe(c, ctl) {
   try {
-    const models = await resolveModels(c, ctl.signal);
-    const model = models[0];
-    const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-goog-api-key': c.key },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Reply with the single word OK.' }] }], generationConfig: { maxOutputTokens: 8 } }),
-    });
-    if (r.ok) return { ok: true, model };
-    const g = await googleError(r);
-    return { ok: false, model, status: g.status, scope: g.scope, retryAfter: g.retry || null, detail: g.detail, code: r.status === 429 ? (g.scope === 'day' ? 'quota_day' : 'quota_minute') : r.status === 404 ? 'bad_model' : r.status === 401 || r.status === 403 ? 'gemini_key' : 'upstream' };
+    const configured = await resolveModels(c, ctl.signal);
+    const list = await listModels(c, ctl.signal);
+    const cands = [...new Set([...configured, ...rankModels(list || []).slice(0, 4)])].slice(0, 4);
+    const tried = [];
+    let first = null;
+    for (const model of cands) {
+      const r = await fetch(`${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-goog-api-key': c.key },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Reply with the single word OK.' }] }], generationConfig: { maxOutputTokens: 8 } }),
+      });
+      if (r.ok) { tried.push({ model, ok: true }); return { ok: true, model, tried, primaryFailed: !!first }; }
+      const g = await googleError(r);
+      const code = r.status === 429 ? (g.scope === 'day' ? 'quota_day' : 'quota_minute') : r.status === 404 ? 'bad_model' : r.status === 401 || r.status === 403 ? 'gemini_key' : 'upstream';
+      tried.push({ model, ok: false, status: g.status, code });
+      first ||= { ok: false, model, status: g.status, scope: g.scope, retryAfter: g.retry || null, detail: g.detail, code };
+      if (code === 'gemini_key') break;                          // 密钥问题：换模型没有用
+    }
+    return { ...first, tried };
   } catch (e) { return { ok: false, code: 'upstream', detail: reason(e) }; }
 }

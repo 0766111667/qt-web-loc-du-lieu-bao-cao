@@ -268,7 +268,7 @@ export async function testAi() {
   state.ai = { ...state.ai, checking: true }; notify();
   const h = await checkAi({ endpoint: state.settings.aiEndpoint, getHeaders: aiHeaders, probe: true });
   if (h.ready) { aiOk(); state.ai = { ...state.ai, model: h.model || state.ai.model, usage: h.usage || state.ai.usage }; } else applyGate(h);
-  state.ai = { ...state.ai, checking: false, probe: { at: Date.now(), ok: !!h.ready, code: h.code || null, message: h.message || '', model: h.model || '', retryAfter: h.retryAfter || 0 } }; notify();
+  state.ai = { ...state.ai, checking: false, probe: { at: Date.now(), ok: !!h.ready, code: h.code || null, message: h.message || '', model: h.model || '', retryAfter: h.retryAfter || 0, tried: h.probe?.tried || [], primaryFailed: !!h.probe?.primaryFailed } }; notify();
   if (h.ready) scheduleSweep(300);
   return h;
 }

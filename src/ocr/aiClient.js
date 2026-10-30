@@ -86,6 +86,7 @@ export async function checkAi({ endpoint, getHeaders, probe = false, fetchImpl =
   const out = { ready: true, model: j.model, fallbackModel: j.fallbackModel, usage: u || null, user: j.user || null };
   if (j.probe) {
     out.probe = j.probe;
+    if (j.probe.ok && j.probe.model) out.model = j.probe.model;
     if (j.probe.ok === false) { out.ready = false; out.code = j.probe.code; out.retryAfter = j.probe.retryAfter || 0; out.message = `${textOf(j.probe.code)}${j.probe.detail ? `：${j.probe.detail}` : ''}`; out.retryable = j.probe.code === 'quota_minute'; }
   }
   return out;

@@ -80,6 +80,7 @@ function AiDiag() {
       <h3>AI 诊断</h3>
       <p>模型：<b>{ai.model || '—'}</b>　今日已用：<b>{ai.usage?.n ?? '—'}</b> / {ai.usage?.max ?? '—'}</p>
       {p && <p>最近检测（{new Date(p.at).toLocaleTimeString('zh-CN')}）：{p.ok ? '✓ 正常，可以使用' : `✗ ${p.message || p.code}${p.retryAfter ? `（约 ${p.retryAfter} 秒后可重试）` : ''}`}</p>}
+      {p?.tried?.length > 0 && <p class="hint">逐个测试的模型：{p.tried.map((t) => `${t.model} ${t.ok ? '✓' : `✗(${t.status || t.code})`}`).join('　')}{p.ok && p.primaryFailed ? ` —— 主模型当前过载，已自动改用 ${p.model}。可在 Vercel 把 GEMINI_MODEL 改成 ${p.model}。` : ''}</p>}
       <p class="hint">本次使用：调用 {st.calls} 次 · 询问 {st.asked} 个单元格 · 修正 {st.fixed} 处 · 使校验通过 {st.solved} 张图片 · 没有改动 {st.unchanged} 张</p>
       {ai.log.length > 0 && <details><summary>最近的错误（{ai.log.length}）</summary><ul>{ai.log.map((l) => <li>{new Date(l.at).toLocaleTimeString('zh-CN')} · {l.code} · {l.message}</li>)}</ul></details>}
       <p class="hint">免费版 Gemini 有“每分钟”和“每天”两种额度。每分钟满了会自动等待后继续；每天满了会暂停，次日自动恢复，不会反复重试。</p>

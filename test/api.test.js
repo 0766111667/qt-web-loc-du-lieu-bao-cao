@@ -141,3 +141,12 @@ test('API: 缺少环境变量时给出明确提示', async () => {
     r = res(); await handler(req(), r); assert.equal(r.code, 500); assert.equal(r.body.code, 'not_configured');
   } finally { process.env.GEMINI_API_KEY = save; }
 });
+
+test('API: probe 逐个测试模型——主模型 503 时自动试下一个，并报告每个模型的结果', async () => {
+  const w = world({ gemini: async (url) => (url.includes('flash-lite') ? jres(200, { candidates: [{ content: { parts: [{ text: 'OK' }] } }] }) : jres(503, { error: { message: 'This model is currently experiencing high demand.' } })) });
+  try {
+    const r = res(); await handler({ method: 'GET', headers: { authorization: `Bearer ${tok()}`, 'x-forwarded-for': '7.7.8.1' }, query: { probe: '1' } }, r);
+    assert.equal(r.body.probe.ok, true); assert.equal(r.body.probe.primaryFailed, true); assert.match(r.body.probe.model, /flash-lite/);
+    assert.equal(r.body.probe.tried[0].ok, false); assert.equal(r.body.probe.tried[0].status, 503);
+  } finally { w.restore(); }
+});
