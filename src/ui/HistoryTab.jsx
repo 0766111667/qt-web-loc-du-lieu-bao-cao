@@ -22,6 +22,7 @@ export function HistoryTab() {
               <div class="job-meta">日期 {fmtDate(r.date)} · 发生 {sum(r, 'occ')}，已处理 {sum(r, 'proc')}</div>
             </div>
             <Chip kind={r.status === 'auto' ? 'ok' : 'info'}>{r.status === 'auto' ? '自动确认' : '人工确认'}</Chip>
+            {/(^|,)(ai|solver|edited)(,|$)/.test(r.note || '') && <Chip kind="neutral">已校正</Chip>}
             <div class="job-actions">
               <button onClick={() => reopenReport(r.id)} title="把报告放回“待复核”以修改数字">重新打开修改</button>
               <ConfirmButton class="quiet" label="删除" confirmLabel="再点一次删除" onConfirm={() => deleteReport(r.id)} />

@@ -1,4 +1,4 @@
-// Máy khách Supabase tối giản, KHÔNG phụ thuộc thư viện: đăng nhập bằng email (mã/OTP hoặc liên kết), giữ phiên nhiều tháng,
+// Máy khách Supabase tối giản, KHÔNG phụ thuộc thư viện: đăng nhập bằng tài khoản + mật khẩu, giữ phiên nhiều tháng,
 // tự làm mới token, gọi PostgREST. Viết thuần fetch để kiểm thử được bằng Node.
 export class CloudError extends Error {
   constructor(code, message, status = 0) { super(message); this.name = 'CloudError'; this.code = code; this.status = status; }
@@ -11,10 +11,17 @@ const memoryStorage = () => { const m = new Map(); return { getItem: (k) => m.ge
 
 function errMessage(j, status) {
   const m = String(j?.msg || j?.error_description || j?.message || j?.error || '');
-  if (/signups? not allowed|not allowed for otp|user not found/i.test(m)) return '该邮箱没有被邀请。请联系管理员在 Supabase 中邀请你的邮箱。';
-  if (/token has expired|invalid|otp_expired/i.test(m)) return '验证码无效或已过期，请重新获取。';
-  if (/rate limit|too many|security purposes/i.test(m) || status === 429) return '发送太频繁，请稍等一分钟再试（Supabase 默认每小时限制发送邮件数量）。';
+  if (/invalid login|invalid_credentials|invalid grant|email not confirmed/i.test(m) || status === 400 && /credentials/i.test(m)) return '账号或密码错误';
+  if (/rate limit|too many|security purposes/i.test(m) || status === 429) return '尝试次数过多，请稍后再试';
   return m || `请求失败（${status}）`;
+}
+
+// 账号 → 内部邮箱：输入 admin 会变成 admin@qt.app（Supabase 要求邮箱格式）；也可以直接输入完整邮箱。
+export function toEmail(account) {
+  const a = String(account || '').trim().toLowerCase();
+  if (a.includes('@')) return a;
+  if (!/^[a-z0-9._-]{1,32}$/.test(a)) return '';
+  return `${a}@qt.app`;
 }
 
 export function createCloud({ url, anonKey, storage, fetchImpl, now = () => Date.now() } = {}) {
@@ -81,33 +88,13 @@ export function createCloud({ url, anonKey, storage, fetchImpl, now = () => Date
       return session.access_token;
     },
 
-    async sendCode(email, redirectTo) {
-      const q = redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : '';
-      const res = await call(`/auth/v1/otp${q}`, { method: 'POST', body: { email: String(email).trim(), create_user: false } });
-      if (!res.ok) throw await fail(res);
-      return true;
-    },
-    async verifyCode(email, token) {
-      const res = await call('/auth/v1/verify', { method: 'POST', body: { type: 'email', email: String(email).trim(), token: String(token).replace(/\s+/g, '') } });
-      if (!res.ok) throw await fail(res);
+    // 账号 + 密码登录。失败时不区分“账号不存在”和“密码错误”，避免被用来探测账号。
+    async signIn(account, password) {
+      const email = toEmail(account);
+      if (!email || !password) throw new CloudError('request', '账号或密码错误', 400);
+      const res = await call('/auth/v1/token?grant_type=password', { method: 'POST', body: { email, password: String(password) } });
+      if (!res.ok) { const e = await fail(res); throw new CloudError(e.code === 'rate_limited' ? 'rate_limited' : 'request', e.code === 'rate_limited' ? e.message : '账号或密码错误', res.status); }
       setSession(toSession(await res.json()));
-      return api.user();
-    },
-    // Khi người dùng bấm liên kết trong email, Supabase đưa token vào phần #hash của URL.
-    consumeUrlHash(hash, clean) {
-      const h = String(hash || '').replace(/^#/, '');
-      if (!h.includes('access_token=') && !h.includes('error_description=')) return null;
-      const p = new URLSearchParams(h);
-      clean?.();
-      if (p.get('error_description')) throw new CloudError('link', errMessage({ error_description: p.get('error_description') }, 400), 400);
-      if (!p.get('access_token') || !p.get('refresh_token')) return null;
-      setSession(toSession({ access_token: p.get('access_token'), refresh_token: p.get('refresh_token'), expires_in: p.get('expires_in'), expires_at: Number(p.get('expires_at')) || undefined, user: undefined }));
-      return api.user();
-    },
-    async loadUser() { // điền email/id nếu phiên mới chỉ có token (đăng nhập bằng liên kết)
-      const token = await api.getToken(); if (!token) return null;
-      const res = await call('/auth/v1/user', { token });
-      if (res.ok) { const u = await res.json(); setSession({ ...session, user: { id: u.id, email: u.email } }); }
       return api.user();
     },
     async signOut() {

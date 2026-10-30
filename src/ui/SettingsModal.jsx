@@ -60,13 +60,29 @@ function ReadingPane() {
       <Toggle k="aiEnabled" hint="只发送不确定的行（很小的图片片段）。校验未通过的图片会自动交给 AI；失败时在后台自动重试，不需要手动开关。">用 Gemini AI 自动重新识别不确定的行</Toggle>
       {st.aiEnabled && <>
         <label class="field">AI 服务地址<input value={st.aiEndpoint} onChange={(e) => updateSettings({ aiEndpoint: e.target.value.trim() })} /></label>
-        {s.auth.status === 'off' && <label class="field">访问密码（APP_ACCESS_KEY，未启用登录时使用）<input type="password" autoComplete="off" value={st.aiKey} onChange={(e) => updateSettings({ aiKey: e.target.value })} /></label>}
         <div class="row-gap">
           <button onClick={testAi} disabled={s.ai.checking}>{s.ai.checking ? '检查中…' : '检查 AI 连接'}</button>
           {s.ai.status === 'ok' && <span class="ai-ok">✓ 连接正常{s.ai.model ? `（模型 ${s.ai.model}）` : ''}</span>}
           {s.ai.status === 'error' && <span class="ai-bad">✗ {s.ai.message}</span>}
         </div>
+        <AiDiag />
       </>}
+    </div>
+  );
+}
+
+// AI 诊断：真实的额度状态（来自 Google 的回应）、本次使用的统计、最近的错误。
+function AiDiag() {
+  const { ai } = useStore();
+  const st = ai.stats, p = ai.probe;
+  return (
+    <div class="diag">
+      <h3>AI 诊断</h3>
+      <p>模型：<b>{ai.model || '—'}</b>　今日已用：<b>{ai.usage?.n ?? '—'}</b> / {ai.usage?.max ?? '—'}</p>
+      {p && <p>最近检测（{new Date(p.at).toLocaleTimeString('zh-CN')}）：{p.ok ? '✓ 正常，可以使用' : `✗ ${p.message || p.code}${p.retryAfter ? `（约 ${p.retryAfter} 秒后可重试）` : ''}`}</p>}
+      <p class="hint">本次使用：调用 {st.calls} 次 · 询问 {st.asked} 个单元格 · 修正 {st.fixed} 处 · 使校验通过 {st.solved} 张图片 · 没有改动 {st.unchanged} 张</p>
+      {ai.log.length > 0 && <details><summary>最近的错误（{ai.log.length}）</summary><ul>{ai.log.map((l) => <li>{new Date(l.at).toLocaleTimeString('zh-CN')} · {l.code} · {l.message}</li>)}</ul></details>}
+      <p class="hint">免费版 Gemini 有“每分钟”和“每天”两种额度。每分钟满了会自动等待后继续；每天满了会暂停，次日自动恢复，不会反复重试。</p>
     </div>
   );
 }
@@ -78,7 +94,7 @@ function AccountPane() {
   if (s.auth.status === 'off') return <div class="stack"><p class="warn-box">尚未配置 Supabase：数据只保存在这台设备上，也没有登录和多设备同步。配置方法见 README 的“第 3 步”。</p></div>;
   return (
     <div class="stack">
-      <div><h3>账号</h3><p>已登录：<b>{s.auth.email || '—'}</b></p><p class="hint">这台设备会保持登录，不需要再输入密码。</p><button onClick={signOutCloud}>退出登录</button></div>
+      <div><h3>账号</h3><p>已登录：<b>{(s.auth.email || '—').replace(/@qt\.app$/, '')}</b></p><button onClick={signOutCloud}>退出登录</button></div>
       <div><h3>云同步</h3>
         <p>{status === 'syncing' ? '同步中…' : status === 'offline' ? '离线：恢复网络后自动同步。' : status === 'error' ? `同步出错：${error}` : '已连接到团队共用的数据。'}{pending > 0 && ` 有 ${pending} 项等待上传。`}</p>
         {lastAt > 0 && <p class="hint">上次同步：{new Date(lastAt).toLocaleString('zh-CN')}</p>}

@@ -85,7 +85,7 @@ export function classify(glyph, templates) {
   const ranked = Object.entries(best).sort((p, q) => p[1] - q[1]);
   if (!ranked.length) return { digit: null, dist: 1, margin: 0 };
   const [d1, s1] = ranked[0], s2 = ranked[1]?.[1] ?? s1 + 1;
-  return { digit: d1, dist: s1, margin: s2 - s1, second: ranked[1]?.[0] };
+  return { digit: d1, dist: s1, margin: s2 - s1, second: ranked[1]?.[0], third: ranked[2]?.[0] };
 }
 
 // Đọc một ô số. confidence: 0..1, thấp -> cần kiểm tra lại (AI / người).

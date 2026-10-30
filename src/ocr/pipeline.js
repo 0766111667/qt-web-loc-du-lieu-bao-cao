@@ -7,7 +7,8 @@ import { validate, sumRows } from '../core/validate.js';
 
 const pack = (c) => ({
   value: c.value, text: c.text, confidence: Math.round(c.confidence * 100) / 100,
-  glyphs: c.glyphs.map((g) => ({ v: g.v, aspect: g.aspect })),
+  // d/m/alt: chữ số đọc được, độ chênh với phương án thứ hai, và các chữ số thay thế (cho bộ giải tổ hợp cục bộ & gợi ý cho AI)
+  glyphs: c.glyphs.map((g) => ({ v: g.v, aspect: g.aspect, d: g.digit, m: Math.round((g.margin ?? 1) * 1000) / 1000, alt: [g.second, g.third].filter((x) => x != null) })),
 });
 
 // ctx: { catalog, templates, settings?, ocrName?: (gray) => Promise<string> }

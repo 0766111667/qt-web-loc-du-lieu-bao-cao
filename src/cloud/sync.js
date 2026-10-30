@@ -7,7 +7,8 @@ export const META_KEYS = ['catalog', 'learned'];
 const json = (v) => JSON.stringify(v ?? null);
 
 export const toRow = (r) => ({ id: r.id, hash: r.hash || null, name: r.name, date: r.date, month: r.month, created_at: r.createdAt, rows: r.rows, printed_total: r.printedTotal ?? null, status: r.status || 'manual', note: r.note || '', deleted: false });
-export const fromRow = (w) => ({ id: w.id, hash: w.hash || undefined, name: w.name, date: w.date, month: w.month, createdAt: Number(w.created_at), rows: w.rows || [], printedTotal: w.printed_total ?? null, status: w.status || 'manual', note: w.note || '' });
+import { cleanReport } from '../core/sanitize.js';
+export const fromRow = (w) => cleanReport({ id: w.id, hash: w.hash || undefined, name: w.name, date: w.date, month: w.month, createdAt: Number(w.created_at), rows: w.rows || [], printedTotal: w.printed_total ?? null, status: w.status || 'manual', note: w.note || '' });
 
 export const emptySyncState = () => ({ cursor: null, initialized: false, up: {}, del: {}, rev: { catalog: 0, learned: 0 }, synced: { catalog: null, learned: null }, lastAt: 0 });
 
@@ -38,6 +39,7 @@ export function createSync({ remote, local, load, save }) {
       const dup = w.hash && have.find((r) => r.hash === w.hash && r.id !== w.id);
       if (dup) { local.removeReport(dup.id); delete st.up[dup.id]; }
       const next = fromRow(w), cur = have.find((r) => r.id === w.id);
+      if (!next) continue;                                   // dữ liệu sai hình dạng: bỏ qua, không bao giờ lưu
       if (cur && json(cur) === json(next)) continue; // chính bản mình vừa đẩy lên, không có gì mới
       local.upsertReport(next); pulled++;
     }

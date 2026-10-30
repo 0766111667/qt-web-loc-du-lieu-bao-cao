@@ -1,6 +1,6 @@
 {
   "name": "qt-report-aggregator",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "description": "识别 QT 软件问题统计表截图，校验一致后按月累计。问题类型可动态增删。",
@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/core.test.js test/queue.test.js test/api.test.js test/ai.test.js test/cloud.test.js test/sync.test.js test/features.test.js",
+    "test": "node --test test/core.test.js test/queue.test.js test/api.test.js test/ai.test.js test/cloud.test.js test/sync.test.js test/features.test.js test/security.test.js",
     "seeds": "node scripts/make-seeds.mjs",
     "calibrate": "node scripts/make-calibration.mjs"
   },

@@ -1,6 +1,6 @@
 import { Fragment } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { useStore, setTab, openJob, editCell, editTotal, assignItem, createItemForRow, approveJob, retryJob, removeJob, jobReady, setJobDate, runAiNow, rescanAll, undoAiCell, conflictsForJob } from '../app/store.js';
+import { useStore, setTab, openJob, editCell, editTotal, assignItem, createItemForRow, approveJob, retryJob, removeJob, jobReady, setJobDate, runAiNow, rescanAll, undoAiCell, conflictsForJob, approveAllMatched, matchedJobs } from '../app/store.js';
 import { orderedItems } from '../core/catalog.js';
 import { T } from '../app/text.js';
 import { Chip, ConfirmButton, useBlobUrl } from './bits.jsx';
@@ -42,7 +42,7 @@ const digitsOnly = (e) => { e.target.value = e.target.value.replace(/\D/g, '').s
 
 function Cell({ cell, min, onInput, onUndo, label }) {
   const cls = cell.suggested ? 'sug' : cell.source === 'ai' ? 'ai' : cell.value == null ? 'bad' : cell.confidence < min && !cell.edited ? 'warn' : cell.edited ? 'edited' : '';
-  const tag = cell.suggested ? '总计推算' : cell.source === 'ai' ? 'AI' : null;
+  const tag = cell.suggested ? (cell.source === 'solver' ? '组合推算' : '总计推算') : cell.source === 'ai' ? 'AI' : null;
   return (
     <div class="cellwrap">
       <input class={`num ${cls}`} inputMode="numeric" pattern="[0-9]*" enterKeyHint="next" aria-label={label} value={cell.value ?? ''} onFocus={(e) => e.target.select()} onInput={(e) => onInput(digitsOnly(e))} />
@@ -61,6 +61,7 @@ function ReviewPane({ job }) {
   const rowOf = (issue) => (issue.row != null ? live[issue.row]?.rowIx ?? null : null);
   const [hl, setHl] = useState(() => { const first = res.validation.issues.find((i) => i.row != null); return first ? rowOf(first) : null; });
   const [armed, setArmed] = useState(false);
+  const [onlySus, setOnlySus] = useState(false);
   const [draft, setDraft] = useState(null); // { rowIx, name, label }
   const v = res.validation;
   const ready = jobReady(job);
@@ -69,7 +70,8 @@ function ReviewPane({ job }) {
   const sameDay = conflictsForJob(job);
   const goRow = (rowIx) => { if (rowIx == null) return; setHl(rowIx); document.getElementById(`r-${job.id}-${rowIx}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
   const items = orderedItems(s.catalog);
-  const shownRows = res.rows;
+  const isSusRow = (r) => !r.skip && (!r.itemId || [r.occ, r.proc].some((c) => c.value == null || c.suggested || c.source === 'ai' || (!c.edited && c.confidence < s.settings.minConfidence)) || v.issues.some((i) => i.row != null && live[i.row] === r));
+  const shownRows = onlySus ? res.rows.filter(isSusRow) : res.rows;
 
   const onSelect = (r, val) => {
     if (val === '__new') setDraft({ rowIx: r.rowIx, name: r.srcName || '', label: '' });
@@ -103,6 +105,7 @@ function ReviewPane({ job }) {
         {busy && <p class="hint">AI 正在重新识别这张图片…</p>}
         {!busy && job.aiPending && res.aiError && <p class="hint">AI 暂不可用：{res.aiError}。系统会自动重试，也可点“AI 重新识别”立即重试。</p>}
 
+        <label class="inline sus-toggle"><input type="checkbox" checked={onlySus} onChange={(e) => setOnlySus(e.target.checked)} /> 只看可疑行（{res.rows.filter(isSusRow).length}/{live.length}）</label>
         <div class="tablewrap">
           <table class="grid">
             <thead><tr><th>{T.col.no}</th><th>{T.col.item}</th><th>{T.col.occ}</th><th>{T.col.proc}</th></tr></thead>
@@ -173,6 +176,7 @@ export function ReviewTab() {
   const needy = items.filter((j) => j.result.validation.status !== 'ok').length;
   return (
     <section>
+      {matchedJobs().length > 0 && <div class="bulk"><button class="primary" onClick={approveAllMatched}>一键确认全部总计一致的图片（{matchedJobs().length}）</button></div>}
       {needy > 0 && <div class="bulk"><button onClick={rescanAll} disabled={s.ai.busy.length > 0}>{s.ai.busy.length ? 'AI 识别中…' : `AI 重新识别全部（${needy}）`}</button></div>}
       <nav class="queue" aria-label="待复核的图片">
         {items.map((j) => <button class={j.id === sel.id ? 'on' : ''} onClick={() => openJob(j.id)} title={j.name}><span>{j.name}</span><em>{j.result.validation.issues.length}</em></button>)}

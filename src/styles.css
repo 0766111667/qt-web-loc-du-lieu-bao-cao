@@ -152,7 +152,12 @@ hr { border: 0; border-top: 1px solid var(--rule); width: 100%; }
 .toast button { background: transparent; color: inherit; border-color: currentColor; }
 
 /* 登录、同步、提醒、报告 */
-.login { max-width: 26rem; margin: 12vh auto 2rem; padding: 0 1rem; display: grid; gap: 1rem; }
+.login { max-width: 22rem; margin: 14vh auto 2rem; padding: 0 1rem; display: grid; gap: 1.5rem; }
+.login h1 { text-align: center; }
+.login .field { max-width: none; }
+.login .primary { min-height: 46px; }
+.login-err { color: var(--bad); margin: 0; font-size: .92rem; }
+.pw { display: flex; gap: .25rem; } .pw input { flex: 1; min-width: 0; }
 .syncbadge { font-size: .82rem; padding: .15rem .6rem; min-height: 30px; white-space: nowrap; }
 .syncbadge.error { border-color: #ffb4a8 !important; } .syncbadge.offline { opacity: .85; }
 .notice { border: 1px solid; border-radius: 4px; padding: .6rem .8rem; margin: .75rem 0; display: grid; gap: .25rem; }
@@ -213,3 +218,8 @@ input.num.sug { border-color: var(--warn); background: var(--warn-bg); }
   .top { flex-wrap: wrap; } .cat-list li { grid-template-columns: auto minmax(0, 1fr); } .cat-actions { grid-column: 1 / -1; justify-content: start; }
 }
 @media (prefers-reduced-motion: reduce) { .bar > div { transition: none; } }
+
+.diag{margin-top:12px;padding:10px 12px;border:1px solid var(--line,#ddd);border-radius:10px;font-size:14px}
+.diag h3{margin:0 0 6px;font-size:15px}
+.diag ul{margin:6px 0 0;padding-left:18px}
+.sus-toggle{display:flex;gap:.4rem;align-items:center;margin:.25rem 0 .5rem}

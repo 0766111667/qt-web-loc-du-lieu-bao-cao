@@ -1,4 +1,5 @@
-const q = (v) => { const s = String(v ?? ''); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+// 防 CSV 公式注入：以 = + - @ 制表符 回车 开头的文本加单引号前缀（数字不受影响）
+const q = (v) => { let s = String(v ?? ''); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`; return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 
 export function buildCsv(agg, head, totalLabel = '总计') {
   const rows = [head, ...agg.rows.map((r, i) => [i + 1, r.label, r.occ, r.proc, r.backlog, agg.totals.occ ? Math.round(r.pct * 10) / 10 : 0])];

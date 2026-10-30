@@ -19,7 +19,7 @@ self.addEventListener('fetch', (e) => {
         const cache = await caches.open('qt-share');
         for (const k of await cache.keys()) await cache.delete(k);
         let n = 0;
-        for (const f of form.getAll('images')) if (f && f.size) await cache.put(new Request(`${url.origin}${url.pathname.replace(/share-target$/, '')}shared/${Date.now()}-${n++}-${encodeURIComponent(f.name || 'shared.png')}`), new Response(f, { headers: { 'content-type': f.type || 'image/png' } }));
+        for (const f of form.getAll('images').slice(0, 20)) if (f && f.size && f.size <= 20_000_000 && /^image\/(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(f.type)) await cache.put(new Request(`${url.origin}${url.pathname.replace(/share-target$/, '')}shared/${Date.now()}-${n++}-${encodeURIComponent(f.name || 'shared.png')}`), new Response(f, { headers: { 'content-type': f.type || 'image/png' } }));
         return Response.redirect(`${url.pathname.replace(/share-target$/, '')}?shared=${n}`, 303);
       } catch { return Response.redirect(url.pathname.replace(/share-target$/, ''), 303); }
     })());
