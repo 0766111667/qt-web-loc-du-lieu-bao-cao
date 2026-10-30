@@ -577,12 +577,6 @@ export async function wipeAll() {
 export const monthAggregate = () => aggregate(state.reports, state.catalog, state.month);
 export { itemById, T };
 
-// Nút "thử lại ngay": xóa trạng thái chặn/độ trễ rồi quét lại tất cả ảnh đang chờ AI.
-export function retryAiNow() {
-  state.ai = { ...state.ai, fails: 0, blocking: false };
-  sweepAi({ manual: true });
-}
-
 // ---------- đăng nhập một lần (Supabase) ----------
 function setAuthUser(u) {
   const was = state.auth.status;
